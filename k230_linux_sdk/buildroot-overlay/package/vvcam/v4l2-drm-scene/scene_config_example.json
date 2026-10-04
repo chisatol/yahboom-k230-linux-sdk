@@ -1,0 +1,14 @@
+{
+    "scenes": [
+        {
+            "name": "day",
+            "calib_dir": "/root/scenes/day",
+            "mode": 0
+        },
+        {
+            "name": "night",
+            "calib_dir": "/root/scenes/night",
+            "mode": 0
+        }
+    ]
+}

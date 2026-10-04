@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: elaina <elaina@k230>
+Date: Wed, 30 Sep 2026 15:00:00 +0800
+Subject: [PATCH] drm: canaan: use supported RGB565 for fbdev console
+
+The K230 primary OSD plane does not advertise XRGB8888, which is selected
+by fbdev's 32 bpp preference. RGB565 is supported by both the plane and VO.
+
+---
+ drivers/gpu/drm/canaan/canaan_drv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/canaan/canaan_drv.c b/drivers/gpu/drm/canaan/canaan_drv.c
+--- a/drivers/gpu/drm/canaan/canaan_drv.c
++++ b/drivers/gpu/drm/canaan/canaan_drv.c
+@@ -269,7 +269,7 @@ static int canaan_drm_bind(struct device *dev)
+ 		goto finish_poll;
+ 	}
+ 
+-	drm_fbdev_generic_setup(drm_dev, 32);
++	drm_fbdev_generic_setup(drm_dev, 16);
+ 	DRM_DEV_INFO(dev, "Canaan K230 DRM driver register successfully\n");
+ 
+ 	return 0;
+-- 
+2.34.1

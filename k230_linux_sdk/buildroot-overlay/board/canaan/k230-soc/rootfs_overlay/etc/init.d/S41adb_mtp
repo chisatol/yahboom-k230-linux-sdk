@@ -1,0 +1,83 @@
+#!/bin/sh
+set -eu
+
+g1="/sys/kernel/config/usb_gadget/g1"
+case "$1" in
+  start)
+    modprobe libcomposite
+    modprobe usb_f_fs
+    mkdir -p /sys/kernel/config /dev/usb-ffs/mtp /dev/usb-ffs/adb
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+    if [ ! -d "${g1}" ]; then
+      mkdir "${g1}"
+      cd "${g1}"
+      echo 0x29F1 > idVendor
+      echo 0x0105 > idProduct
+      echo 0x0100 > bcdDevice
+      echo 0x0200 > bcdUSB
+      mkdir strings/0x409
+      echo 0123456789ABCDEF > strings/0x409/serialnumber
+      echo "canaan" > strings/0x409/manufacturer
+      echo "k230_linux" > strings/0x409/product
+      mkdir configs/c.1
+      mkdir configs/c.1/strings/0x409
+      echo "Conf 1" > configs/c.1/strings/0x409/configuration
+      mkdir functions/ffs.mtp functions/ffs.adb
+      ln -s "${g1}/functions/ffs.mtp" configs/c.1/ffs.mtp
+      ln -s "${g1}/functions/ffs.adb" configs/c.1/ffs.adb
+    fi
+
+    mountpoint -q /dev/usb-ffs/mtp || mount -t functionfs mtp /dev/usb-ffs/mtp
+    mountpoint -q /dev/usb-ffs/adb || mount -o uid=2000,gid=2000 -t functionfs adb /dev/usb-ffs/adb
+
+    /usr/sbin/umtprd >> /var/log/umtprd.log 2>&1 &
+    mtp_pid=$!
+    /usr/bin/adbd >> /var/log/adbd.log 2>&1 &
+    adb_pid=$!
+
+    ready=0
+    i=0
+    while [ "$i" -lt 40 ]; do
+      if [ -e /dev/usb-ffs/mtp/ep1 ] && [ -e /dev/usb-ffs/adb/ep1 ] &&
+         kill -0 "$mtp_pid" 2>/dev/null && kill -0 "$adb_pid" 2>/dev/null; then
+        ready=1
+        break
+      fi
+      sleep 0.25
+      i=$((i + 1))
+    done
+    if [ "$ready" -ne 1 ]; then
+      echo "MTP/ADB FunctionFS descriptors did not become ready" >&2
+      tail -n 30 /var/log/umtprd.log /var/log/adbd.log >&2 2>/dev/null || true
+      kill "$mtp_pid" "$adb_pid" 2>/dev/null || true
+      exit 1
+    fi
+
+    if ! printf '%s' "91500000.usb" > "${g1}/UDC"; then
+      echo "Failed to bind USB gadget to 91500000.usb" >&2
+      exit 1
+    fi
+    ;;
+  stop)
+    killall adbd 2>/dev/null || true
+    killall umtprd 2>/dev/null || true
+    if [ -e "${g1}/UDC" ]; then
+      printf '\n' > "${g1}/UDC" 2>/dev/null || true
+    fi
+    rm -f "${g1}/configs/c.1/ffs.adb" "${g1}/configs/c.1/ffs.mtp" 2>/dev/null || true
+    umount /dev/usb-ffs/adb 2>/dev/null || true
+    umount /dev/usb-ffs/mtp 2>/dev/null || true
+    rmdir "${g1}/functions/ffs.adb" "${g1}/functions/ffs.mtp" 2>/dev/null || true
+    rmdir "${g1}/configs/c.1/strings/0x409" "${g1}/configs/c.1" 2>/dev/null || true
+    rmdir "${g1}/strings/0x409" "${g1}" 2>/dev/null || true
+    umount /sys/kernel/config 2>/dev/null || true
+    ;;
+  restart|reload|force-reload)
+    echo "Error: argument '$1' not supported" >&2
+    exit 3
+    ;;
+  *)
+    echo "Usage: adbd start|stop" >&2
+    exit 3
+    ;;
+esac

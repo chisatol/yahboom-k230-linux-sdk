@@ -1,0 +1,125 @@
+	#if(D240C2501V1)
+	
+
+  &dsi1 {
+	status = "okay";
+//	rockchip,lane-rate = <1000>;
+	dsi1_panel: panel@0 {
+		status = "okay";
+		compatible = "simple-panel-dsi";
+		reset-gpios = <&gpio3 RK_PC1 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&dsi1_rst_gpio>;
+		reg = <0>;
+		 backlight = <&backlight>;
+		reset-delay-ms = <30>;
+		enable-delay-ms = <100>;
+		prepare-delay-ms = <20>;
+		unprepare-delay-ms = <20>;
+		disable-delay-ms = <20>;
+		init-delay-ms = <120>;
+		dsi,flags = <(MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
+			MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_EOT_PACKET)>;
+		dsi,format = <MIPI_DSI_FMT_RGB888>;
+		dsi,lanes  = <2>;
+		panel-init-sequence = [
+			// init code
+			05 78 01 01
+			39 00 06 FF 77 01 00 00 13
+			15 00 02 EF 08
+			39 00 06 FF 77 01 00 00 10
+			39 00 03 C0 4F 00
+			39 00 03 C1 10 0C
+			39 00 03 C2 37 04
+			15 00 02 C7 00 // x-dir rotate 0:0x00,rotate 180:0x04
+			15 00 02 CC 10
+			39 00 11 B0 00 0B 13 0D 10 07 02 08 07 1F 04 11 0F 28 2F 1F
+			39 00 11 B1 00 0C 13 0C 10 05 02 08 08 1E 05 13 11 27 30 1F
+			39 00 06 FF 77 01 00 00 11 // enable  bk fun of  command 2  BK1
+			15 00 02 B0 4A //VOP
+			15 00 02 B1 4A // VCOM
+			15 00 02 B2 87 //VGH
+			15 00 02 B3 80
+			15 00 02 B5 45 //VGL
+			15 00 02 B7 85
+			15 00 02 B8 20
+			15 00 02 C1 78
+			15 00 02 C2 78
+			15 64 02 D0 88
+			39 00 04 E0 00 00 02
+			39 00 0C E1 04 B0 06 B0 05 B0 05 B0 00 44 44
+			39 00 0D E2 20 20 44 44 96 A0 00 00 96 A0 00 00
+			39 00 05 E3 00 00 22 22
+			39 00 03 E4 44 44
+			39 00 11 E5 0C 90 B0 A0 0E 92 B0 A0 08 8C B0 A0 0A 8E B0 A0
+			39 00 05 E6 00 00 22 22
+			39 00 03 E7 44 44
+			39 00 11 E8 0D 91 B0 A0 0F 93 B0 A0 09 8D B0 A0 0B 8F B0 A0
+			39 00 03 E9 36 44
+			39 00 08 EB 00 00 E4 E4 44 00 40
+			39 00 11 ED C1 A2 BF 0F 67 45 FF FF FF FF 54 76 F0 FB 2A 1C
+			39 00 07 EF 10 0D 04 08 3F 1F
+			39 00 06 FF 77 01 00 00 13
+		    39 00 03 E8 00 0E
+			39 00 06 FF 77 01 00 00 00
+	        05 78 01 11
+			39 00 06 FF 77 01 00 00 13
+		    39 14 03 E8 00 0C
+		    39 14 03 E8 00 00
+			39 00 06 FF 77 01 00 00 00
+			15 00 02 36 00 //U&D  Y-DIR rotate 0:0x00,rotate 180:0x10          
+			05 14 01 29		
+		];
+
+		panel-exit-sequence = [
+			05 00 01 28
+			05 00 01 10
+		];
+
+		disp_timings1: display-timings {
+			native-mode = <&dsi1_timing0>;
+			dsi1_timing0: timing0 {
+				clock-frequency = <21000000>;
+				hactive = <480>;   	
+				vactive = <640>;   	 
+				hfront-porch = <10>;  
+				hsync-len = <2>;   	 
+				hback-porch = <10>;  
+				vfront-porch = <30>;  
+				vsync-len = <2>;     
+				vback-porch = <30>;   
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				panel_in_dsi1: endpoint {
+					remote-endpoint = <&dsi1_out_panel>;
+				};
+			};
+		};
+	};
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+			dsi1_out_panel: endpoint {
+				remote-endpoint = <&panel_in_dsi1>;
+			};
+		};
+	};
+
+};
+
+#endif

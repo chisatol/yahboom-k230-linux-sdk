@@ -1,0 +1,272 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: elaina <elaina@k230>
+Date: Tue, 10 Aug 2026 19:00:00 +0800
+Subject: [PATCH] add yahboom d240c2501 lcd support
+
+---
+ .../dts/canaan/display-d240c2501v1.dtsi    | 100 +++++++
+ .../dts/canaan/k230-canmv-yahboom-lcd.dts  |  83 ++++++++
+ .../dts/canaan/k230-canmv-yahboom.dts      |  14 ++
+ 3 files changed, 197 insertions(+)
+ create mode 100644 arch/riscv/boot/dts/canaan/display-d240c2501v1.dtsi
+ create mode 100644 arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
+ create mode 100644 arch/riscv/boot/dts/canaan/k230-canmv-yahboom.dts
+
+diff --git a/arch/riscv/boot/dts/canaan/display-d240c2501v1.dtsi b/arch/riscv/boot/dts/canaan/display-d240c2501v1.dtsi
+new file mode 100644
+index 000000000..7264433dab
+--- /dev/null
++++ b/arch/riscv/boot/dts/canaan/display-d240c2501v1.dtsi
+@@ -0,0 +1,108 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * D240C2501V1 2.4" MIPI DSI LCD
++ * 480x640, ST7701S IC, 2 lane
++ * Init sequence based on vendor RK3566 reference
++ */
++
++&vo {
++	vth_line = <10>;
++};
++
++&dsi {
++	ports {
++		port@1 {
++			reg = <1>;
++			dsi_out_d240c2501: endpoint {
++				remote-endpoint = <&d240c2501_in>;
++			};
++		};
++	};
++
++	lcd: panel@0 {
++		compatible = "canaan,universal";
++		reg = <0>;
++
++		panel-width-mm = <36>;
++		panel-height-mm = <49>;
++		panel-dsi-lane = <2>;
++
++		panel-init-sequence = [
++			05 78 01 01
++			39 00 06 FF 77 01 00 00 13
++			15 00 02 EF 08
++			39 00 06 FF 77 01 00 00 10
++			39 00 03 C0 4F 00
++			39 00 03 C1 10 0C
++			39 00 03 C2 37 04
++			15 00 02 C7 00
++			15 00 02 CC 10
++			39 00 11 B0 00 0B 13 0D 10 07 02 08 07 1F 04 11 0F 28 2F 1F
++			39 00 11 B1 00 0C 13 0C 10 05 02 08 08 1E 05 13 11 27 30 1F
++			39 00 06 FF 77 01 00 00 11
++			15 00 02 B0 4A
++			15 00 02 B1 4A
++			15 00 02 B2 87
++			15 00 02 B3 80
++			15 00 02 B5 45
++			15 00 02 B7 85
++			15 00 02 B8 20
++			15 00 02 C0 09
++			15 00 02 C1 78
++			15 00 02 C2 78
++			15 64 02 D0 88
++			39 00 04 E0 00 00 02
++			39 00 0C E1 04 B0 06 B0 05 B0 07 B0 00 44 44
++			39 00 0D E2 20 20 44 44 96 A0 00 00 96 A0 00 00
++			39 00 05 E3 00 00 22 22
++			39 00 03 E4 44 44
++			39 00 11 E5 0C 90 B0 A0 0E 92 B0 A0 08 8C B0 A0 0A 8E B0 A0
++			39 00 05 E6 00 00 22 22
++			39 00 03 E7 44 44
++			39 00 11 E8 0D 91 B0 A0 0F 93 B0 A0 09 8D B0 A0 0B 8F B0 A0
++			39 00 03 E9 36 00
++			39 00 08 EB 00 00 E4 E4 44 88 40
++			39 00 11 ED C1 A2 BF 0F 67 45 FF FF FF FF 54 76 F0 FB 2A 1C
++			39 00 07 EF 10 0D 04 08 3F 1F
++			39 00 06 FF 77 01 00 00 13
++			39 00 03 E8 00 0E
++			39 00 06 FF 77 01 00 00 00
++			05 78 01 11
++			39 00 06 FF 77 01 00 00 13
++			39 14 03 E8 00 0C
++			39 14 03 E8 00 00
++			39 00 06 FF 77 01 00 00 00
++			15 00 02 36 00
++			05 14 01 29
++		];
++
++		display-timings {
++			timing-0 {
++				clock-frequency = <21000000>;
++				hactive = <480>;
++				vactive = <640>;
++				hfront-porch = <10>;
++				hback-porch = <10>;
++				hsync-len = <2>;
++				vfront-porch = <30>;
++				vback-porch = <30>;
++				vsync-len = <2>;
++				hsync-active = <0>;
++				vsync-active = <0>;
++				de-active = <0>;
++				pixelclk-active = <0>;
++			};
++		};
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++			port@0 {
++				reg = <0>;
++				d240c2501_in: endpoint {
++					remote-endpoint = <&dsi_out_d240c2501>;
++				};
++			};
++		};
++	};
++};
+
+diff --git a/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
+new file mode 100644
+index 000000000..c4712e31a3
+--- /dev/null
++++ b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
+@@ -0,0 +1,117 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++#include "k230.dtsi"
++#include "display-d240c2501v1.dtsi"
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++
++/ {
++	model = "K230 CanMV Yahboom";
++	compatible = "kendryte,k230_canmv_yahboom", "canaan,canmv-k230", "canaan,kendryte-k230";
++	aliases {
++		serial3 = &uart3;
++		i2c0 = &i2c4;
++		i2c1 = &i2c3;
++		mmc0 = &mmc_sd0;
++		mmc1 = &mmc_sd1;
++	};
++	chosen { stdout-path = "serial0:115200n8";	};
++	gpio-keys {
++		compatible = "gpio-keys";
++		label = "Yahboom KEY1";
++		pinctrl-names = "default";
++		pinctrl-0 = <&key1_pins>;
++
++		key1 {
++			label = "KEY1";
++			linux,code = <KEY_PROG1>;
++			gpios = <&gpio0_ports 60 GPIO_ACTIVE_LOW>;
++			debounce-interval = <30>;
++		};
++	};
++	ddr: memory@0 {
++		device_type = "memory";
++		reg = <0x0 0 0x0 0x40000000>;
++	};
++};
++
++&uart0 { status = "okay"; };
++&uart3 { status = "okay"; };
++&mmc_sd0{
++	status = "okay";
++	cap-sd-highspeed;
++	bus-width = <1>;
++	max-frequency = <50000000>;
++	rx_delay_line = <0x0d>;
++	tx_delay_line = <0xb0>;
++	clocks = <&sd0_cclk_gate>,<&sd0_cclk_gate>;
++	clock-names = "core", "bus";
++	sdhci-caps-mask = <0x2 0>;
++};
++&mmc_sd1{ status = "okay"; no-1-8-v; cap-sd-highspeed; mshc_ctrl_r = <0x00>; };
++&usb0 { dr_mode = "peripheral"; status = "okay"; };
++&usb1 { dr_mode = "host"; status = "okay"; };
++&i2c4 { status = "okay"; };
++&v4l2isp {
++	dev0-sensor-name = "gc2093";
++	dev0-sensor-mode = <0>;
++	dev0-sensor-i2c-bus = <0>; /* alias i2c0 = &i2c4 */
++};
++&vo { vth_line = <10>; background = <0x808000>; };
++&mipi0 {
++	id = <2>;
++	reg = <0x0 0x9000a800 0x0 0x800>;
++	interrupts = <121 IRQ_TYPE_LEVEL_HIGH>;
++	resets = <&sysctl_reset K230_RESET_CSI2_REG_OFFSET K230_RESET_CSI2_TYPE
++		  K230_RESET_CSI2_DONE_BIT K230_RESET_CSI2_ASSERT_BIT>,
++		<&sysctl_reset K230_RESET_M2_REG_OFFSET K230_RESET_M2_TYPE
++		 K230_RESET_M2_DONE_BIT K230_RESET_M2_ASSERT_BIT>;
++	reset-gpios = <&gpio0_ports 62 GPIO_ACTIVE_HIGH>;
++	status = "okay";
++};
++&iomux {
++	key1_pins: key1-pins {
++		pinmux {
++			pins = "io60";
++			function = "alt0";
++			input-enable;
++			output-disable;
++			bias-pull-up;
++		};
++	};
++	i2c3_pins: i2c3-pins {
++		pinmux {
++			pins = "io44", "io45";
++			function = "alt2";
++			bias-pull-up;
++		};
++	};
++	touch_irq_pins: touch-irq-pins {
++		pinmux {
++			pins = "io23";
++			function = "alt0";
++			input-enable;
++			output-disable;
++			bias-pull-up;
++		};
++	};
++};
++&i2c3 {
++	status = "okay";
++	pinctrl-names = "default";
++	pinctrl-0 = <&i2c3_pins>;
++		touchscreen@38 {
++			compatible = "edt,edt-ft5406";
++			reg = <0x38>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&touch_irq_pins>;
++			reset-gpios = <&gpio0_ports 24 GPIO_ACTIVE_LOW>;
++			interrupt-parent = <&gpio0_ports>;
++			interrupts = <23 IRQ_TYPE_EDGE_FALLING>;
++			touchscreen-size-x = <480>;
++			touchscreen-size-y = <640>;
++		};
++};
++&lcd {
++	dsi_reset-gpios = <&gpio0_ports 22 GPIO_ACTIVE_HIGH>;
++	backlight_gpio-gpios = <&gpio0_ports 25 GPIO_ACTIVE_LOW>;
++};
+diff --git a/arch/riscv/boot/dts/canaan/k230-canmv-yahboom.dts b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom.dts
+new file mode 100644
+index 000000000..8aca051344
+--- /dev/null
++++ b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom.dts
+@@ -0,0 +1,14 @@
++/dts-v1/;
++#include "k230.dtsi"
++
++/ {
++	model = "kendryte k230 canmv yahboom";
++	compatible = "kendryte,k230_canmv_yahboom";
++	memory@0 {
++		device_type = "memory";
++		reg = <0x0 0 0x0 0x40000000>;
++	};
++};
++
++&mmc_sd0 { status = "okay"; };
++&mmc_sd1 { status = "okay"; };

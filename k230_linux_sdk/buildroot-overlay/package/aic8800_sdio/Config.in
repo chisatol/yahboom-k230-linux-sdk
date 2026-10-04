@@ -1,0 +1,5 @@
+config BR2_PACKAGE_AIC8800_SDIO
+    bool "AIC8800 SDIO"
+    select BR2_PACKAGE_BLUEZ_INC
+    help
+        AIC8800 SDIO

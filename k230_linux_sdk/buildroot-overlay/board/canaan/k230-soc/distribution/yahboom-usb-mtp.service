@@ -1,0 +1,13 @@
+[Unit]
+Description=K230 USB MTP and ADB gadget
+After=local-fs.target systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/init.d/S41adb_mtp start
+ExecStop=/etc/init.d/S41adb_mtp stop
+RemainAfterExit=yes
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

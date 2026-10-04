@@ -1,0 +1,188 @@
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <thread>
+#include "modules/audio_processing/include/audio_processing.h"
+
+// 定义 WEBRTC_AUDIO3A_AEC_CONFIG 结构体，增加声道数和采样率参数
+typedef struct {
+    std::unique_ptr<webrtc::AudioProcessing> apm;
+    webrtc::StreamConfig input_config;
+    webrtc::StreamConfig output_config;
+    int frameSize;    //每帧样本数
+    int numChannels;  //声道数
+    int sampleRate;   //采样率
+} WEBRTC_AUDIO3A_AEC_CONFIG;
+
+// 函数用于读取 PCM 文件到向量中
+std::vector<int16_t> readPcmFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return {};
+    }
+
+    std::vector<int16_t> data;
+    int16_t sample;
+    while (file.read(reinterpret_cast<char*>(&sample), sizeof(sample))) {
+        data.push_back(sample);
+    }
+    return data;
+}
+
+// 函数用于将处理后的音频数据写入 PCM 文件
+void writePcmFile(const std::string& filename, const std::vector<int16_t>& data) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return;
+    }
+
+    for (int16_t sample : data) {
+        file.write(reinterpret_cast<const char*>(&sample), sizeof(sample));
+    }
+}
+
+// 初始化函数
+int webrtc_audio3a_aec_init(WEBRTC_AUDIO3A_AEC_CONFIG* config) {
+    if (config == nullptr) {
+        std::cerr << "config is nullptr" << std::endl;
+        return -1;
+    }
+    // 创建 AudioProcessing 实例
+    config->apm = std::unique_ptr<webrtc::AudioProcessing>(webrtc::AudioProcessingBuilder().Create());
+    if (!config->apm) {
+        std::cerr << "Failed to create AudioProcessing instance" << std::endl;
+        return -1;
+    }
+
+    // 配置音频处理参数
+    webrtc::AudioProcessing::Config apmConfig;
+    apmConfig.echo_canceller.enabled = true;
+    apmConfig.noise_suppression.enabled = true;
+    apmConfig.gain_controller1.enabled = false;
+    config->apm->ApplyConfig(apmConfig);
+
+    // 使用结构体中的采样率参数，假设每帧 10 ms
+    // config->frameSize = config->sampleRate / 100;  // 这行代码不再需要
+    config->input_config = webrtc::StreamConfig(config->sampleRate, config->numChannels, false);
+    config->output_config = webrtc::StreamConfig(config->sampleRate, config->numChannels, false);
+
+    return 0;
+}
+
+// 处理函数
+int webrtc_audio3a_aec_process(WEBRTC_AUDIO3A_AEC_CONFIG* config, short *mic_buf, short *spk_buf, short *out_buf) {
+    if (config == nullptr || mic_buf == nullptr || out_buf == nullptr) {
+        std::cerr << "Invalid pointers" << std::endl;
+        return -1;
+    }
+
+    std::vector<int16_t> dest(config->frameSize);
+    const int16_t* src = mic_buf;
+
+    //处理扬声器音频数据（注入参考信号）
+    if (spk_buf != nullptr) {
+        const int16_t* speaker_src = spk_buf;
+        config->apm->ProcessReverseStream(speaker_src, config->input_config, config->output_config, dest.data());
+    }
+
+    // 处理麦克风音频数据
+    int ret = config->apm->ProcessStream(src, config->input_config, config->output_config, dest.data());
+    if (ret != 0) {
+        std::cerr << "Audio processing failed" << std::endl;
+        return -1;
+    }
+
+    // 将处理后的音频数据复制到输出缓冲区
+    for (int i = 0; i < config->frameSize; ++i) {
+        out_buf[i] = dest[i];
+    }
+
+    return 0;
+}
+
+// 销毁函数
+int webrtc_audio3a_aec_destroy(WEBRTC_AUDIO3A_AEC_CONFIG* config) {
+    if (config == nullptr) {
+        std::cerr << "config is nullptr" << std::endl;
+        return -1;
+    }
+    config->apm.reset();
+    return 0;
+}
+
+
+#include <chrono>
+
+// 获取当前时间的微秒数
+int64_t getCurrentTimeMicroseconds() {
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 4) {
+        std::cerr << "Usage: " << argv[0] << " <mic.pcm> <speaker.pcm> <out.pcm>" << std::endl;
+        return 1;
+    }
+
+    std::string micFilename = argv[1];
+    std::string speakerFilename = argv[2];
+    std::string outputFilename = argv[3];
+
+    // 读取 PCM 文件
+    std::vector<int16_t> micData = readPcmFile(micFilename);
+    std::vector<int16_t> speakerData = readPcmFile(speakerFilename);
+
+    if (micData.empty() || speakerData.empty()) {
+        return 1;
+    }
+
+    WEBRTC_AUDIO3A_AEC_CONFIG config;
+    // 初始化声道数和采样率
+    config.numChannels = 1;
+    config.sampleRate = 8000;
+    // 每帧10ms
+    config.frameSize = config.sampleRate / 100;
+
+    if (webrtc_audio3a_aec_init(&config) != 0) {
+        return 1;
+    }
+
+    std::vector<int16_t> processedData;
+    for (size_t i = 0; i < micData.size(); i += config.frameSize) {
+        std::vector<int16_t> outBuf(config.frameSize);
+
+        //int64_t startTime = getCurrentTimeMicroseconds();
+        int ret = webrtc_audio3a_aec_process(&config, const_cast<short*>(micData.data() + i),
+                                             (i < speakerData.size()) ? const_cast<short*>(speakerData.data() + i) : nullptr,
+                                             outBuf.data());
+
+        if (ret != 0) {
+            std::cerr << "Audio processing failed at frame " << i / config.frameSize << std::endl;
+            continue;
+        }
+
+        //int64_t endTime = getCurrentTimeMicroseconds();
+        //std::cout << "Processed frame " << i / config.frameSize << " in " << (endTime - startTime) << " us" << std::endl;
+
+        processedData.insert(processedData.end(), outBuf.begin(), outBuf.begin() + std::min(config.frameSize, static_cast<int>(micData.size() - i)));
+
+        // 增加延迟，防止 CPU 占用过高
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+
+    // 将处理后的音频数据写入文件
+    writePcmFile(outputFilename, processedData);
+
+    // 释放资源
+    webrtc_audio3a_aec_destroy(&config);
+
+    std::cout << "Audio processing completed. Output saved to " << outputFilename << std::endl;
+
+    return 0;
+}

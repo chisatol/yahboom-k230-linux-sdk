@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
+#include "k230.dtsi"
+#include "display-d240c2501v1.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "K230 CanMV Yahboom";
+	compatible = "kendryte,k230_canmv_yahboom", "canaan,canmv-k230", "canaan,kendryte-k230";
+	aliases {
+		serial3 = &uart3;
+		i2c0 = &i2c4;
+		i2c1 = &i2c3;
+		mmc0 = &mmc_sd0;
+		mmc1 = &mmc_sd1;
+	};
+	chosen { stdout-path = "serial0:115200n8";	};
+	gpio-keys {
+		compatible = "gpio-keys-polled";
+		label = "Yahboom KEY1";
+		poll-interval = <20>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&key1_pins>;
+
+		key1 {
+			label = "KEY1";
+			linux,code = <KEY_PROG1>;
+			gpios = <&gpio1_ports 29 GPIO_ACTIVE_LOW>;
+			debounce-interval = <30>;
+		};
+	};
+	ddr: memory@0 {
+		device_type = "memory";
+		reg = <0x0 0 0x0 0x40000000>;
+	};
+};
+
+&uart0 { status = "okay"; };
+&uart3 { status = "okay"; };
+&mmc_sd0{
+	status = "okay";
+	cap-sd-highspeed;
+	bus-width = <1>;
+	max-frequency = <50000000>;
+	rx_delay_line = <0x0d>;
+	tx_delay_line = <0xb0>;
+	clocks = <&sd0_cclk_gate>,<&sd0_cclk_gate>;
+	clock-names = "core", "bus";
+	sdhci-caps-mask = <0x2 0>;
+};
+&mmc_sd1{ status = "okay"; no-1-8-v; cap-sd-highspeed; mshc_ctrl_r = <0x00>; };
+&usb0 { dr_mode = "peripheral"; status = "okay"; };
+&usb1 { dr_mode = "host"; status = "okay"; };
+&i2c4 { status = "okay"; };
+&v4l2isp {
+	dev0-sensor-name = "gc2093";
+	dev0-sensor-mode = <0>;
+	dev0-sensor-i2c-bus = <0>; /* alias i2c0 = &i2c4 */
+};
+&vo { vth_line = <10>; background = <0x808000>; };
+&mipi0 {
+	id = <2>;
+	reg = <0x0 0x9000a800 0x0 0x800>;
+	interrupts = <121 IRQ_TYPE_LEVEL_HIGH>;
+	resets = <&sysctl_reset K230_RESET_CSI2_REG_OFFSET K230_RESET_CSI2_TYPE
+		  K230_RESET_CSI2_DONE_BIT K230_RESET_CSI2_ASSERT_BIT>,
+		<&sysctl_reset K230_RESET_M2_REG_OFFSET K230_RESET_M2_TYPE
+		 K230_RESET_M2_DONE_BIT K230_RESET_M2_ASSERT_BIT>;
+	reset-gpios = <&gpio1_ports 30 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+};
+&iomux {
+	key1_pins: key1-pins {
+		pinmux {
+			pins = "io61";
+			function = "alt0";
+			input-enable;
+			output-disable;
+			bias-pull-up;
+		};
+	};
+	i2c3_pins: i2c3-pins {
+		pinmux {
+			pins = "io44", "io45";
+			function = "alt2";
+			bias-pull-up;
+		};
+	};
+	touch_irq_pins: touch-irq-pins {
+		pinmux {
+			pins = "io23";
+			function = "alt0";
+			input-enable;
+			output-disable;
+			bias-pull-up;
+		};
+	};
+};
+&i2c3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c3_pins>;
+		touchscreen@38 {
+			compatible = "edt,edt-ft5406";
+			reg = <0x38>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&touch_irq_pins>;
+			reset-gpios = <&gpio0_ports 24 GPIO_ACTIVE_LOW>;
+			interrupt-parent = <&gpio0_ports>;
+			interrupts = <23 IRQ_TYPE_EDGE_FALLING>;
+			touchscreen-size-x = <480>;
+			touchscreen-size-y = <640>;
+		};
+};
+
+&lcd {
+	dsi_reset-gpios = <&gpio0_ports 22 GPIO_ACTIVE_HIGH>;
+	backlight_gpio-gpios = <&gpio0_ports 25 GPIO_ACTIVE_LOW>;
+};

@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Yahboom display mode switch
+Exec=/usr/local/sbin/yahboom-display-mode.py
+X-GNOME-Autostart-enabled=true

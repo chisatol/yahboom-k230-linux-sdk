@@ -1,0 +1,9 @@
+/lcd/**/*.img
+/lcd/**/*.o
+/lcd/**/*.ko
+/lcd/**/*.a
+/lcd/**/modules.order
+/lcd/**/modules.builtin
+/lcd/**/Module.symvers
+/lcd/**/.*.cmd
+/lcd/**/.tmp_versions/

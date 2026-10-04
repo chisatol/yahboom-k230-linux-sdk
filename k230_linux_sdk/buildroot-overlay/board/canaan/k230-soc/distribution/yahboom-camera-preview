@@ -1,0 +1,51 @@
+#!/bin/sh
+set -u
+
+if ! systemctl is-active --quiet vvcam.service; then
+    printf 'VVCAM service is not active; trying to start it...\n'
+    systemctl start vvcam.service || true
+    sleep 2
+fi
+
+found=0
+preview_opened=0
+if [ -n "${YAHBOOM_CAMERA_DEVICE:-}" ]; then
+    set -- "$YAHBOOM_CAMERA_DEVICE"
+else
+    set -- /dev/video2 /dev/video3 /dev/video4
+fi
+
+for device do
+    [ -e "$device" ] || continue
+    found=1
+
+    formats=$(/usr/bin/v4l2-ctl -d "$device" --list-formats-ext 2>&1) || {
+        printf '\n%s is not a usable V4L2 capture node:\n%s\n' "$device" "$formats"
+        continue
+    }
+    case "$formats" in
+        *NV12*) ;;
+        *) continue ;;
+    esac
+
+    printf 'Trying GC2093 capture on %s (NV12)...\n' "$device"
+    if /usr/bin/ffplay -hide_banner -window_title 'GC2093 Camera' \
+        -f video4linux2 -input_format nv12 \
+        -video_size 1920x1080 -framerate 30 -i "$device"; then
+        preview_opened=1
+        break
+    fi
+done
+
+if [ "$preview_opened" -eq 1 ]; then
+    printf '\nCamera preview closed.\n'
+elif [ "$found" -eq 0 ]; then
+    printf '\nNo /dev/video* nodes found. Check the GC2093 connection and vvcam.service.\n'
+else
+    printf '\nNo NV12 capture node could open. V4L2 devices:\n'
+    /usr/bin/v4l2-ctl --list-devices 2>&1 || true
+    printf '\nCheck the messages above and camera/ISP connection.\n'
+fi
+
+printf '\nPress Enter to close this diagnostic window. '
+read -r _

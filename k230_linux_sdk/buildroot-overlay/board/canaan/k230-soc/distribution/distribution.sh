@@ -1,0 +1,636 @@
+#!/bin/bash
+# Script to generate distribution images for K230 SDK
+# Usage: distribution.sh <distribution_type> <BRW_BUILD_DIR>
+
+distribution_type="$1"
+BRW_BUILD_DIR="$2"
+BINARIES_DIR="${BRW_BUILD_DIR}/images"
+K230_SDK_ROOT=$(cd "$(dirname "$(dirname "${BRW_BUILD_DIR}")")" && pwd)
+
+# Don't use set -e because it hides errors in pipe commands
+# set -e
+set -e  # Disable exit on error to see all errors
+
+# Color definitions
+COLOR_NONE="\033[0m"
+RED="\033[1;31;40m"
+BLUE="\033[1;34;40m"
+GREEN="\033[1;32;40m"
+YELLOW="\033[1;33;40m"
+
+# Print colored messages
+print_red() {
+    echo -e "${RED}$*${COLOR_NONE}"
+}
+
+print_blue() {
+    echo -e "${BLUE}$*${COLOR_NONE}"
+}
+
+print_green() {
+    echo -e "${GREEN}$*${COLOR_NONE}"
+}
+
+print_yellow() {
+    echo -e "${YELLOW}$*${COLOR_NONE}"
+}
+
+# Generate rootfs helper function
+# $1: distribution name (debian/ubuntu)
+generate_rootfs_help() {
+    local dist="$1"
+    local script_name="rootfs_${dist}_gen.sh"
+    local script_path="${K230_SDK_ROOT}/buildroot-overlay/board/canaan/k230-soc/distribution/${script_name}"
+
+    print_red "You need to manually execute the follow commands from ${script_name}:"
+    echo -e "${BLUE}"
+    cat "${script_path}"
+    echo -e "${COLOR_NONE}"
+    print_red "Execute the above commands one by one on Linux (not in Docker)"
+    print_red "Reference doc: https://developer.canaan-creative.com/k230/zh/dev/03_other/K230_debian_ubuntu%E8%AF%B4%E6%98%8E.html"
+}
+
+debian_gen_rootfs() {
+    generate_rootfs_help "debian"
+}
+
+ubuntu_gen_rootfs() {
+    generate_rootfs_help "ubuntu"
+}
+
+# Generate output image filename with version info
+# $1: distribution name
+get_image_last_name() {
+    local distname="$1"
+    local CONF=$(basename "${BRW_BUILD_DIR}")
+
+    local sdk_ver="v0.0.0"
+    local nncase_ver="v2.11.0"  # Default nncase version
+    local commit_id="xx"
+
+    local sdk_ver_file="${K230_SDK_ROOT}/buildroot-overlay/board/canaan/k230-soc/rootfs_overlay/etc/version/release_version"
+    local nncase_ver_file="${K230_SDK_ROOT}/output/${CONF}/build/libnncase/nncase/include/nncase/version.h"
+
+    # Determine board name based on config
+    local canaan_site_name
+    case "${CONF}" in
+        k230_canmv_defconfig)
+            canaan_site_name="CanMV-K230_V1P0_P1"
+            ;;
+        k230_evb_defconfig)
+            canaan_site_name="EVB-K230"
+            ;;
+        k230_canmv_01studio_defconfig)
+            canaan_site_name="CanMV-K230_01studio"
+            ;;
+        k230_canmv_lckfb_defconfig)
+            canaan_site_name="CanMV-K230_LCKFB"
+            ;;
+        k230_canmv_v3_defconfig)
+            canaan_site_name="CanMV-K230_V3P0"
+            ;;
+        k230d_canmv_defconfig)
+            canaan_site_name="CanMV-K230D"
+            ;;
+        k230d_canmv_junroc_ai_cam_defconfig)
+            canaan_site_name="CanMV_K230D_JUNROC_AI_CAM"
+            ;;
+        *)
+            canaan_site_name="${CONF%%_defconfig}"
+            ;;
+    esac
+
+    # Extract SDK version
+    if [ -f "${sdk_ver_file}" ]; then
+        sdk_ver=$(awk -F- '/^sdk:/ { print $1 }' "${sdk_ver_file}" | cut -d: -f2)
+        commit_id=$(awk -F- '/^sdk:/ { print $6}' ${sdk_ver_file})
+    fi
+
+    # Extract nncase version from version.h if available
+    if [ -f "${nncase_ver_file}" ]; then
+        local nncase_version_raw
+        nncase_version_raw=$(grep -w "NNCASE_VERSION" "${nncase_ver_file}" | cut -d'"' -f2)
+        if [ -n "${nncase_version_raw}" ]; then
+            nncase_ver="${nncase_version_raw}"
+        fi
+    fi
+
+    echo "${canaan_site_name}_${distname}_${sdk_ver}_nncase_v${nncase_ver}_${commit_id}.img.gz"
+}
+
+
+
+# Generate distribution rootfs and finalize image
+# $1: dist name (debian/ubuntu)
+# $2: dist_rootfs tarball name (debian13/ubuntu24)
+# $3: dist_rootfs tarball URL
+# $4: dist_rootfs tarball MD5 checksum
+distribution_rootfs_replace() {
+    local distname="$1"
+    local distr_rootfs="$2"
+    local distr_rootfs_url="$3"
+    local md5_v="$4"
+    local dist_img_name="${distname}.img"
+
+    # Check root privileges
+    if [ "$(id -u)" -ne 0 ]; then
+        print_red "Permission denied: you need root privileges. Example: sudo make ${distname}"
+        exit 1
+    fi
+
+    # Check buildroot output exists
+    if [ ! -f "${BINARIES_DIR}/sysimage-sdcard.img" ]; then
+        print_red "Error: you need to build buildroot first: make buildroot"
+        exit 1
+    fi
+
+    print_blue "Processing ${distname} distribution..."
+
+    cd "${BINARIES_DIR}"
+
+    # Copy base image
+    cp sysimage-sdcard.img "${dist_img_name}"
+
+    # Download and verify rootfs tarball (only if missing or corrupt)
+    local need_download=true
+    if [ -f "${distr_rootfs}.tar.gz" ]; then
+        local actual_md5
+        actual_md5=$(md5sum "${distr_rootfs}.tar.gz" | cut -d' ' -f1)
+        if [ "${md5_v}" = "${actual_md5}" ]; then
+            print_blue "${distr_rootfs}.tar.gz already exists and verified, skipping download"
+            need_download=false
+        else
+            print_blue "${distr_rootfs}.tar.gz corrupt, re-downloading..."
+            rm -f "${distr_rootfs}.tar.gz"
+        fi
+    fi
+
+    if [ "$need_download" = true ]; then
+        print_blue "Downloading ${distr_rootfs}.tar.gz..."
+        wget --progress=bar:force "${distr_rootfs_url}" -O "${distr_rootfs}.tar.gz"
+        actual_md5=$(md5sum "${distr_rootfs}.tar.gz" | cut -d' ' -f1)
+        if [ "${md5_v}" != "${actual_md5}" ]; then
+            print_red "Error: ${distr_rootfs}.tar.gz MD5 mismatch!"
+            print_red "Expected: ${md5_v}, Got: ${actual_md5}"
+            exit 1
+        fi
+        print_green "MD5 verified successfully"
+    fi
+
+    # Extract rootfs
+    print_blue "Extracting rootfs (this may take a while)..."
+    rm -rf "${distr_rootfs}"
+    tar -xf "${distr_rootfs}.tar.gz"
+
+    # Copy buildroot artifacts to rootfs
+    local target_dir="${BINARIES_DIR}/../target"
+    cp "${target_dir}/lib/modules" "${distr_rootfs}/lib" -r
+    cp "${K230_SDK_ROOT}/buildroot-overlay/package/nonai2d/modprobe.d/nonai2d.conf" "${distr_rootfs}/lib/modprobe.d/" -r
+    cp "${target_dir}/bin/sta.sh" "${distr_rootfs}/bin/" 2>/dev/null || true
+    cat "${target_dir}/etc/version/release_version" >> "${distr_rootfs}/etc/issue" 2>/dev/null || true
+
+    # Install DEB packages for both debian and ubuntu
+    # For debian: download packages from server first
+    if [ "${distname}" = "debian" ]; then
+    # Install qemu-user-static for chroot support (riscv64 on x86_64)
+    if ! command -v qemu-riscv64-static &> /dev/null; then
+        apt-get install -y qemu-user-static binfmt-support 2>/dev/null || true
+    else
+        print_blue "qemu-user-static already installed, skipping"
+    fi
+    cp /usr/bin/qemu-riscv64-static buildroot-overlay/board/canaan/k230-soc/distribution/ 2>/dev/null || true
+
+        print_blue "Installing DEB packages..."
+        local deb_dir="${BINARIES_DIR}/deb"
+        local opencv_backup="${BINARIES_DIR}/k230-opencv4.deb.bak"
+
+        # Download DEB packages from server
+        mkdir -p "${deb_dir}/remote_deb"
+        # Only download if remote_deb directory is empty or missing
+        if [ -d "${deb_dir}/remote_deb" ] && [ -n "$(ls -A "${deb_dir}/remote_deb" 2>/dev/null)" ]; then
+            print_blue "DEB packages already cached, skipping download"
+        else
+            print_blue "Downloading DEB packages..."
+            mkdir -p "${deb_dir}/remote_deb"
+            wget -c --progress=bar:force -r -np -nc -k -nd -A "*.deb" -P "${deb_dir}/remote_deb" "${DISTR_DOWN_URI}/deb/"
+        fi
+
+        # Temporarily move opencv package (may have dependency issues)
+        [ -f "${deb_dir}/k230-opencv4.deb" ] && mv "${deb_dir}/k230-opencv4.deb" "${opencv_backup}"
+
+        # Install all DEB packages to rootfs
+        for deb_file in "${deb_dir}"/*.deb   "${deb_dir}"/remote_deb/*.deb; do
+            [ -f "${deb_file}" ] && dpkg -x "${deb_file}" "${distr_rootfs}/"
+        done
+
+        # Restore opencv package
+        [ -f "${opencv_backup}" ] && mv "${opencv_backup}" "${deb_dir}/k230-opencv4.deb"
+    else
+        # For ubuntu: install existing deb packages (if any) from BINARIES_DIR/deb
+    # Install qemu-user-static for chroot support (riscv64 on x86_64)
+    if ! command -v qemu-riscv64-static &> /dev/null; then
+        apt-get install -y qemu-user-static binfmt-support 2>/dev/null || true
+    else
+        print_blue "qemu-user-static already installed, skipping"
+    fi
+    cp /usr/bin/qemu-riscv64-static buildroot-overlay/board/canaan/k230-soc/distribution/ 2>/dev/null || true
+
+        print_blue "Installing DEB packages..."
+        for deb_file in "${BINARIES_DIR}/deb/"*.deb; do
+            [ -f "${deb_file}" ] && dpkg -x "${deb_file}" "${distr_rootfs}/"
+        done
+    fi
+
+    # Enable vvcam service for both debian and ubuntu
+    mkdir -p "${distr_rootfs}/etc/systemd/system/basic.target.wants/"
+    ln -sf /etc/systemd/system/vvcam.service "${distr_rootfs}/etc/systemd/system/basic.target.wants/vvcam.service"
+
+    # Download nncase runtime
+    unzip -o  ${K230_SDK_ROOT}/dl/libnncase/nncaseruntime_k230-2.11.0-py3-none-linux_riscv64.whl -d  ${distr_rootfs}/usr/local/lib/python3.1*/dist-packages
+    unzip -o  ${BINARIES_DIR}/../build/python-k230-1.0.0/dist/k230_python-1.0.0-cp313-cp313-linux_riscv64.whl -d  ${distr_rootfs}/usr/local/lib/python3.1*/dist-packages
+
+    # Install desktop environment for debian
+    if [ "${distname}" = "debian" ]; then
+        # Check if cached rootfs with LXDE exists
+        local cached_rootfs="${BINARIES_DIR}/${distr_rootfs}_lxde.tar.gz"
+        if [ -f "${cached_rootfs}" ]; then
+            print_blue "Using cached LXDE rootfs..."
+            rm -rf "${distr_rootfs}"
+            tar -xzf "${cached_rootfs}" -C "${BINARIES_DIR}"
+        else
+            # Install LXDE only if not already installed
+            if [ ! -d "${distr_rootfs}/usr/share/lxde" ]; then
+                print_blue "Installing LXDE desktop environment..."
+                cp /usr/bin/qemu-riscv64-static "${distr_rootfs}/usr/bin/" 2>/dev/null || true
+                chroot "${distr_rootfs}" /bin/bash << EOFCHROOT
+set -e
+echo 'root:root' | chpasswd
+export DEBIAN_FRONTEND=noninteractive
+apt-get update || true
+apt-get install -y lxde-core lightdm xserver-xorg-video-modesetting xinput-calibrator 2>/dev/null || true
+mkdir -p /etc/lightdm
+cat > /etc/lightdm/lightdm.conf << LIGHTDM_EOF
+[Seat:*]
+autologin-user=root
+autologin-user-timeout=0
+user-session=LXDE
+autologin-session=LXDE
+LIGHTDM_EOF
+EOFCHROOT
+                rm -f "${distr_rootfs}/usr/bin/qemu-riscv64-static"
+
+                # Cache the installed rootfs
+                print_blue "Caching LXDE rootfs for future builds..."
+                tar -czf "${cached_rootfs}" -C "${BINARIES_DIR}" "${distr_rootfs}"
+            else
+                print_blue "LXDE already installed, skipping installation"
+            fi
+        fi
+
+        # The LXDE cache may predate SDK packages or omit them. Restore the
+        # K230 runtime packages after replacing the extracted Debian rootfs.
+        local deb_file
+        for deb_file in "${BINARIES_DIR}"/deb/*.deb "${BINARIES_DIR}"/deb/remote_deb/*.deb; do
+            [ -f "${deb_file}" ] && dpkg -x "${deb_file}" "${distr_rootfs}"
+        done
+        if [ ! -f "${distr_rootfs}/etc/systemd/system/vvcam.service" ]; then
+            print_red "K230 VVCAM service is missing after package extraction"
+            exit 1
+        fi
+        mkdir -p "${distr_rootfs}/etc/systemd/system/basic.target.wants"
+        ln -sf /etc/systemd/system/vvcam.service \
+            "${distr_rootfs}/etc/systemd/system/basic.target.wants/vvcam.service"
+        if [ "$(basename "${BRW_BUILD_DIR}")" = "k230_canmv_yahboom_defconfig" ] &&
+           [ -f "${distr_rootfs}/etc/vvcam/isp_start.sh" ]; then
+            sed -i -E '\|^[[:space:]]*/etc/vvcam/S41adb_mtp[[:space:]]+start[[:space:]]*$|d' \
+                "${distr_rootfs}/etc/vvcam/isp_start.sh"
+        fi
+
+        # The LXDE cache replaces the extracted base rootfs; add Buildroot ABI
+        # compatibility libraries only after that replacement.
+        install -D -m 0644 "${target_dir}/usr/lib/libcrypt.so.2" \
+            "${distr_rootfs}/usr/lib/riscv64-linux-gnu/libcrypt.so.2"
+        if [ -e "${target_dir}/usr/lib/libjpeg.so.9" ]; then
+            install -D -m 0644 "${target_dir}/usr/lib/libjpeg.so.9" \
+                "${distr_rootfs}/usr/lib/riscv64-linux-gnu/libjpeg.so.9"
+        fi
+        if [ ! -s "${distr_rootfs}/usr/lib/riscv64-linux-gnu/libcrypt.so.2" ]; then
+            print_red "Required Buildroot compatibility library libcrypt.so.2 is missing"
+            exit 1
+        fi
+
+        mkdir -p "${distr_rootfs}/etc/lightdm"
+        cat > "${distr_rootfs}/etc/lightdm/lightdm.conf" << LIGHTDM_EOF
+[LightDM]
+minimum-vt=7
+
+[Seat:*]
+autologin-user=root
+autologin-user-timeout=0
+user-session=LXDE
+autologin-session=LXDE
+LIGHTDM_EOF
+
+        # Prevent LXDE's locker from blanking the display independently of KEY1.
+        rm -f "${distr_rootfs}/etc/xdg/autostart/light-locker.desktop"
+
+        local root_password_hash="${YAHBOOM_ROOT_PASSWORD_HASH:-}"
+        if [ -z "${root_password_hash}" ]; then
+            root_password_hash=$(openssl passwd -6 root)
+        elif [[ ! "${root_password_hash}" =~ ^\$6\$[A-Za-z0-9./]+\$[A-Za-z0-9./]+$ ]]; then
+            print_red "YAHBOOM_ROOT_PASSWORD_HASH must be a SHA-512 crypt hash"
+            exit 1
+        fi
+        sed -i "s|^root:[^:]*:|root:${root_password_hash}:|" "${distr_rootfs}/etc/shadow"
+        sed -i '/pam_succeed_if.so user != root quiet_success/d' "${distr_rootfs}/etc/pam.d/lightdm-autologin"
+        mkdir -p "${distr_rootfs}/etc/ssh/sshd_config.d"
+        printf 'PermitRootLogin yes\nPasswordAuthentication yes\nPubkeyAuthentication yes\n' \
+            > "${distr_rootfs}/etc/ssh/sshd_config.d/99-k230-root-login.conf"
+
+        if [ "$(basename "${BRW_BUILD_DIR}")" = "k230_canmv_yahboom_defconfig" ]; then
+            local distribution_dir="${K230_SDK_ROOT}/buildroot-overlay/board/canaan/k230-soc/distribution"
+            local usb_gadget_dir="${K230_SDK_ROOT}/buildroot-overlay/board/canaan/k230-soc/rootfs_overlay"
+            for required_usb_file in \
+                "${usb_gadget_dir}/etc/init.d/S41adb_mtp" \
+                "${usb_gadget_dir}/etc/umtprd/umtprd.conf" \
+                "${target_dir}/usr/sbin/umtprd" \
+                "${target_dir}/usr/bin/adbd"; do
+                if [ ! -f "${required_usb_file}" ]; then
+                    print_red "Missing USB MTP gadget component: ${required_usb_file}"
+                    exit 1
+                fi
+            done
+            install -D -m 0755 "${usb_gadget_dir}/etc/init.d/S41adb_mtp" \
+                "${distr_rootfs}/etc/init.d/S41adb_mtp"
+            install -D -m 0644 "${usb_gadget_dir}/etc/umtprd/umtprd.conf" \
+                "${distr_rootfs}/etc/umtprd/umtprd.conf"
+            install -D -m 0755 "${target_dir}/usr/sbin/umtprd" \
+                "${distr_rootfs}/usr/sbin/umtprd"
+            install -D -m 0755 "${target_dir}/usr/bin/adbd" \
+                "${distr_rootfs}/usr/bin/adbd"
+
+            mkdir -p "${distr_rootfs}/etc/modules-load.d"
+            printf '8189fs\n' > "${distr_rootfs}/etc/modules-load.d/k230-yahboom.conf"
+
+            local module_version
+            module_version=$(find "${target_dir}/lib/modules" \
+                -mindepth 1 -maxdepth 1 -type d \
+                ! -name '*.root-owned-backup' \
+                -exec sh -c '[ -f "$1/updates/8189fs.ko" ]' _ '{}' \; \
+                -printf '%f\n' | sort -V | tail -n 1)
+            if [ -z "${module_version}" ] || [ ! -f "${target_dir}/lib/modules/${module_version}/updates/8189fs.ko" ]; then
+                print_red "RTL8189FS kernel module missing from Buildroot target"
+                exit 1
+            fi
+            mkdir -p "${distr_rootfs}/lib/modules"
+            cp -a "${target_dir}/lib/modules/${module_version}" "${distr_rootfs}/lib/modules/"
+
+            if [ ! -x "${distr_rootfs}/usr/bin/xinput" ] ||
+               [ ! -x "${distr_rootfs}/usr/bin/tmux" ] ||
+               [ ! -e "${distr_rootfs}/usr/lib/riscv64-linux-gnu/libXtst.so.6" ] ||
+               [ ! -x "${distr_rootfs}/usr/bin/nm-applet" ] ||
+               [ ! -x "${distr_rootfs}/usr/sbin/dnsmasq" ] ||
+               [ ! -x "${distr_rootfs}/usr/sbin/hostapd" ] ||
+               [ ! -x "${distr_rootfs}/usr/sbin/wpa_supplicant" ] ||
+               [ ! -x "${distr_rootfs}/usr/bin/firefox-esr" ] ||
+               [ ! -x "${distr_rootfs}/usr/bin/xhost" ]; then
+                print_blue "Installing desktop input, networking, browser and serial-console runtime..."
+                cp /usr/bin/qemu-riscv64-static "${distr_rootfs}/usr/bin/"
+                chroot "${distr_rootfs}" /usr/bin/qemu-riscv64-static /usr/bin/apt-get update
+                chroot "${distr_rootfs}" /usr/bin/qemu-riscv64-static /usr/bin/apt-get install -y --no-install-recommends libxtst6 tmux xinput network-manager network-manager-gnome dnsmasq-base hostapd wpasupplicant firefox-esr x11-xserver-utils
+                rm -f "${distr_rootfs}/usr/bin/qemu-riscv64-static"
+            fi
+
+            if ! grep -q '^k230-browser:' "${distr_rootfs}/etc/passwd"; then
+                local browser_root
+                browser_root=$(cd "${distr_rootfs}" && pwd -P)
+                useradd --root "${browser_root}" --system --create-home \
+                    --home-dir /home/k230-browser --shell /usr/sbin/nologin \
+                    --password '!' k230-browser
+            fi
+            install -D -m 0755 "${distribution_dir}/yahboom-firefox.sh" \
+                "${distr_rootfs}/usr/local/sbin/k230-firefox"
+            if [ -f "${distr_rootfs}/usr/share/applications/firefox-esr.desktop" ]; then
+                sed -i -E 's|^Exec=.*firefox-esr([^[:space:]]*)([[:space:]].*)?$|Exec=/usr/local/sbin/k230-firefox\2|' \
+                    "${distr_rootfs}/usr/share/applications/firefox-esr.desktop"
+            fi
+
+            mkdir -p "${distr_rootfs}/etc/NetworkManager/conf.d"
+            cat > "${distr_rootfs}/etc/NetworkManager/conf.d/10-k230-managed-devices.conf" << 'NM_EOF'
+[keyfile]
+unmanaged-devices=interface-name:eth*;interface-name:en*;interface-name:wlan1;interface-name:p2p-dev-wlan*
+NM_EOF
+            # Keep Wi-Fi under NetworkManager while wired interfaces stay on networkd.
+            cat > "${distr_rootfs}/etc/network/interfaces" << 'INTERFACES_EOF'
+auto lo
+iface lo inet loopback
+INTERFACES_EOF
+            mkdir -p "${distr_rootfs}/etc/systemd/system/multi-user.target.wants"
+            ln -sf /lib/systemd/system/NetworkManager.service \
+                "${distr_rootfs}/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+            install -D -m 0755 "${distribution_dir}/yahboom-wifi-start.sh" \
+                "${distr_rootfs}/usr/local/sbin/yahboom-wifi-start"
+            install -D -m 0644 "${distribution_dir}/yahboom-wifi.service" \
+                "${distr_rootfs}/etc/systemd/system/yahboom-wifi.service"
+            install -D -m 0644 "${distribution_dir}/yahboom-usb-mtp.service" \
+                "${distr_rootfs}/etc/systemd/system/yahboom-usb-mtp.service"
+            if [ -n "${YAHBOOM_WIFI_CONFIG_SOURCE:-}" ]; then
+                if [ ! -r "${YAHBOOM_WIFI_CONFIG_SOURCE}" ] ||
+                   ! bash -n "${YAHBOOM_WIFI_CONFIG_SOURCE}"; then
+                    print_red "Invalid or unreadable Wi-Fi config: ${YAHBOOM_WIFI_CONFIG_SOURCE}"
+                    exit 1
+                fi
+                install -D -m 0600 "${YAHBOOM_WIFI_CONFIG_SOURCE}" \
+                    "${distr_rootfs}/root/wifi-config.sh"
+            else
+                install -D -m 0600 /dev/null "${distr_rootfs}/root/wifi-config.sh"
+                cat > "${distr_rootfs}/root/wifi-config.sh" << 'WIFI_CONFIG_EOF'
+#!/bin/bash
+
+# Demo network settings. Replace these before using the image on a real network.
+WIFI_SSID="K230-Demo-WiFi"
+WIFI_PASSWORD="k230demo"
+
+# WPA2 requires a passphrase of at least 8 characters.
+WIFI_INTERFACE="" # Empty means auto-detect (normally wlan0).
+HOTSPOT_SSID="Elaina"
+HOTSPOT_PASSWORD="22332233"
+WIFI_CONFIG_EOF
+                chmod 0600 "${distr_rootfs}/root/wifi-config.sh"
+            fi
+            mkdir -p "${distr_rootfs}/etc/systemd/system/multi-user.target.wants"
+            ln -sf /etc/systemd/system/yahboom-wifi.service \
+                "${distr_rootfs}/etc/systemd/system/multi-user.target.wants/yahboom-wifi.service"
+            ln -sf /etc/systemd/system/yahboom-usb-mtp.service \
+                "${distr_rootfs}/etc/systemd/system/multi-user.target.wants/yahboom-usb-mtp.service"
+            install -D -m 0755 "${distribution_dir}/yahboom-display-mode.py" \
+                "${distr_rootfs}/usr/local/sbin/yahboom-display-mode.py"
+            install -D -m 0755 "${distribution_dir}/yahboom-serial-view.sh" \
+                "${distr_rootfs}/usr/local/sbin/yahboom-serial-view"
+            install -D -m 0644 "${distribution_dir}/yahboom-serial-shell.sh" \
+                "${distr_rootfs}/etc/profile.d/yahboom-serial-shell.sh"
+            install -D -m 0644 "${distribution_dir}/yahboom-display-mode.desktop" \
+                "${distr_rootfs}/etc/xdg/autostart/yahboom-display-mode.desktop"
+            if [ -x "${target_dir}/usr/bin/evtest" ]; then
+                install -D -m 0755 "${target_dir}/usr/bin/evtest" "${distr_rootfs}/usr/bin/evtest"
+            fi
+
+            if [ -f "${distr_rootfs}/etc/systemd/network/10-eth0.network" ]; then
+                sed -i 's/^Name=en\*$/Name=eth*/' "${distr_rootfs}/etc/systemd/network/10-eth0.network"
+            fi
+        fi
+
+        # Configure X11 display rotation and resolution
+        print_blue "Configuring display rotation and touch..."
+        mkdir -p "${distr_rootfs}/etc/X11/xorg.conf.d"
+        cat > "${distr_rootfs}/etc/X11/xorg.conf.d/10-drm.conf" << XORG_EOF
+Section "Device"
+    Identifier "DRM"
+    Driver "modesetting"
+    Option "AccelMethod" "none"
+EndSection
+
+Section "Monitor"
+    Identifier "DSI-1"
+    Option "Rotate" "left"
+EndSection
+
+Section "Screen"
+    Identifier "Screen0"
+    Device "DRM"
+    Monitor "DSI-1"
+    DefaultDepth 24
+    SubSection "Display"
+        Depth 24
+        Modes "480x640"
+    EndSubSection
+EndSection
+
+Section "ServerLayout"
+    Identifier "Layout0"
+    Screen 0 "Screen0" 0 0
+EndSection
+XORG_EOF
+
+        # Configure touchscreen coordinate transformation
+        # 90 degrees CCW: physical(640x480) -> logical(480x640)
+        # X_phys(0-640) -> Y_logic(0-480), Y_phys(0-480) -> X_logic(0-640)
+        cat > "${distr_rootfs}/etc/X11/xorg.conf.d/99-calibration.conf" << CALIB_EOF
+Section "InputClass"
+    Identifier "touchscreen"
+    Driver "libinput"
+    MatchIsTouchscreen "on"
+    MatchDevicePath "/dev/input/event*"
+    Option "CalibrationMatrix" "0 -1 1 -1 0 1 0 0 1"
+EndSection
+CALIB_EOF
+
+        "${distribution_dir}/yahboom-configure-desktop.sh" "${distr_rootfs}"
+
+        print_blue "Display rotation and touch calibration configured"
+    fi
+
+    # Create /app symlink pointing to /root/app
+    cd "${distr_rootfs}"
+    rm -rf app
+    ln -s root/app app
+    cd - >/dev/null
+
+    # Generate ext4 image for rootfs
+    print_blue "Generating ext4 image..."
+    local rootfs_size
+    rootfs_size=$(( $(sudo du -sm "${distr_rootfs}" | cut -f1) + 300 ))
+    mkfs.ext4 -F -d "${distr_rootfs}" -r 1 -N 0 -m 1 -L "rootfs" "${distr_rootfs}.ext4" "${rootfs_size}m"
+
+    # Resize the main image and embed the ext4 rootfs
+    print_blue "Embedding rootfs into image..."
+    local ext4_size=$(( $(wc -c < "${distr_rootfs}.ext4") ))
+    local img_size=$(( $(wc -c < "${dist_img_name}") ))
+    local total_size=$(( (ext4_size + img_size) / 1024 / 1024 + 2 ))
+
+    truncate "${dist_img_name}" -s $((total_size + 1))M
+
+    # Check and fix partition table
+    echo -e "Fix\n" | parted  ---pretend-input-tty "${dist_img_name}" print
+
+    # Find the rootfs partition from parted's machine-readable output.
+    local rootfs_part_id
+    rootfs_part_id=$(parted -m -s "${dist_img_name}" unit s print |
+        awk -F: '$6 == "rootfs" { print $1; exit }')
+    if [ -z "${rootfs_part_id}" ]; then
+        print_red "Error: rootfs partition not found in ${dist_img_name}"
+        exit 1
+    fi
+    parted -s "${dist_img_name}" resizepart "${rootfs_part_id}" "${total_size}MiB"
+
+
+
+    # Embed ext4 image into the partition
+    {  #add dist ext4 to image
+        local rootfs_off_sect
+        rootfs_off_sect=$(parted -m -s "${dist_img_name}" unit s print |
+            awk -F: '$6 == "rootfs" { sub(/s$/, "", $2); print $2; exit }')
+        if [ -z "${rootfs_off_sect}" ]; then
+            print_red "Error: rootfs partition offset not found in ${dist_img_name}"
+            exit 1
+        fi
+        dd if="${distr_rootfs}.ext4" of="${dist_img_name}" bs=4M \
+            oflag=seek_bytes seek="$((rootfs_off_sect * 512))" conv=notrunc status=progress
+    }
+
+    # Compress and create symlink
+    echo "Fix\n" | parted ---pretend-input-tty  "${dist_img_name}" print
+    print_blue "Compressing image (this may take a while)..."
+    gzip -f "${dist_img_name}"
+
+    local final_name
+    final_name=$(get_image_last_name "${distname}")
+    rm -f "${final_name}"
+    ln -s "${dist_img_name}.gz" "${final_name}"
+
+    print_blue "Build successful: ${BINARIES_DIR}/${final_name}"
+    chmod a+w "${distr_rootfs}.tar.gz" "${dist_img_name}.gz" "${final_name}"
+
+    # Cleanup
+    rm -rf "${distr_rootfs}" "${distr_rootfs}.ext4"
+}
+# Main execution
+if [ "$(id -u)" -ne 0 ]; then
+    print_red "Permission denied: you need root privileges. Example: sudo make debian"
+    exit 1
+fi
+
+print_blue "Updating package lists..."
+apt-get update
+apt-get install -y  parted curl
+
+# Determine download mirror
+
+if [ -z "${BR2_PRIMARY_SITE}" ]; then
+    BR2_PRIMARY_SITE="$(${K230_SDK_ROOT}/tools/download/get_fast_url.sh | cut -d',' -f1)"
+fi
+DISTR_DOWN_URI="${BR2_PRIMARY_SITE}/distribution"
+
+print_blue "download mirror...DISTR_DOWN_URI=${DISTR_DOWN_URI},BR2_PRIMARY_SITE=${BR2_PRIMARY_SITE}"
+
+
+# Process distribution type
+case "${distribution_type}" in
+    debian)
+        distribution_rootfs_replace "debian" "debian13" "${DISTR_DOWN_URI}/debian13.tar.gz" "c958b36f56d5e2a88446b03bb7dc6557"
+        ;;
+    ubuntu)
+        distribution_rootfs_replace "ubuntu" "ubuntu24" "${DISTR_DOWN_URI}/ubuntu24.tar.gz" "899cbac7fca3aaab6b6e7adad11152bf"
+        ;;
+    debian_rootfs)
+        debian_gen_rootfs
+        ;;
+    ubuntu_rootfs)
+        ubuntu_gen_rootfs
+        ;;
+    *)
+        print_red "Unknown distribution type: ${distribution_type}"
+        print_yellow "Usage: $0 <debian|ubuntu|debian_rootfs|ubuntu_rootfs> <BRW_BUILD_DIR>"
+        exit 1
+        ;;
+esac

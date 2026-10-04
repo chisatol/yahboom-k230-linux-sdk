@@ -1,0 +1,4 @@
+config BR2_PACKAGE_HELLOWORLD_CMAKE
+    bool "helloworld cmake"
+    help
+      A simple "Hello, World!" program built with CMake.

@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: elaina <elaina@k230>
+Date: Thu, 1 Oct 2026 23:20:00 +0800
+Subject: [PATCH] input: edt-ft5x06: honor generic FT touch count
+
+The Yahboom FT5x06 reports zero contacts in TD_STATUS, but leaves a
+non-reserved coordinate (0, 171) in the first contact record. It can
+also present this stale record with a count of one. Parsing it as a
+contact makes a permanent phantom touch that breaks relative motion.
+Only the generic FT packet format uses TD_STATUS here; leave EDT
+variants unchanged. Drop unused slots when the contact count falls.
+---
+ drivers/input/touchscreen/edt-ft5x06.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/input/touchscreen/edt-ft5x06.c b/drivers/input/touchscreen/edt-ft5x06.c
+--- a/drivers/input/touchscreen/edt-ft5x06.c
++++ b/drivers/input/touchscreen/edt-ft5x06.c
+@@ -302,6 +302,7 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
+ 	u8 rdbuf[63];
+ 	int i, type, x, y, id;
+ 	int error;
++	int points = tsdata->max_support_points;
+ 
+ 	memset(rdbuf, 0, sizeof(rdbuf));
+ 	error = regmap_bulk_read(tsdata->regmap, tsdata->tdata_cmd, rdbuf,
+@@ -317,1 +317,4 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
+-	for (i = 0; i < tsdata->max_support_points; i++) {
++	if (tsdata->version == GENERIC_FT)
++		points = min(points, (int)(rdbuf[2] & 0x0f));
++
++	for (i = 0; i < points; i++) {
+@@ -317,6 +321,11 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
+ 		u8 *buf = &rdbuf[i * tsdata->point_len + tsdata->tdata_offset];
+ 
+ 		type = buf[0] >> 6;
++		/* An idle FT controller can report its stale (0, 171) record. */
++		if (tsdata->version == GENERIC_FT &&
++		    buf[0] == 0 && buf[1] == 0 && buf[2] == 0 &&
++		    buf[3] == 0xab && buf[4] == 0 && buf[5] == 0)
++			continue;
+ 		/* ignore Reserved events */
+ 		if (type == TOUCH_EVENT_RESERVED)
+ 			continue;
+@@ -340,7 +349,10 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
+ 					       x, y, true);
+ 	}
+ 
++	if (tsdata->version == GENERIC_FT)
++		input_mt_sync_frame(tsdata->input);
++	else
+-	input_mt_report_pointer_emulation(tsdata->input, true);
++		input_mt_report_pointer_emulation(tsdata->input, true);
+ 	input_sync(tsdata->input);
+ 
+ out:
+@@ -1323,1 +1332,2 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
+-				    INPUT_MT_DIRECT);
++				    INPUT_MT_DIRECT |
++				    (tsdata->version == GENERIC_FT ? INPUT_MT_DROP_UNUSED : 0));
+-- 
+2.43.0

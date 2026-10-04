@@ -1,0 +1,14 @@
+[Unit]
+Description=Connect to configured Wi-Fi or start K230 fallback hotspot
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/yahboom-wifi-start
+ExecStop=/usr/local/sbin/yahboom-wifi-start stop
+RemainAfterExit=yes
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

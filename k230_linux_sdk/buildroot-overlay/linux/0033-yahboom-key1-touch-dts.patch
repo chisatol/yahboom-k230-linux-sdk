@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: elaina <elaina@k230>
+Date: Thu, 1 Oct 2026 12:30:00 +0800
+Subject: [PATCH] riscv: dts: fix Yahboom KEY1 GPIO polling
+
+The schematic connects KEY1 to GPIO61, which is GPIO1 port 29. Polling
+avoids relying on the unavailable GPIO interrupt observed on the board.
+---
+ arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
+--- a/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
++++ b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
+@@ -18,12 +18,13 @@
+ 	gpio-keys {
+-		compatible = "gpio-keys";
++		compatible = "gpio-keys-polled";
+ 		label = "Yahboom KEY1";
++		poll-interval = <20>;
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&key1_pins>;
+ 
+ 		key1 {
+ 			label = "KEY1";
+ 			linux,code = <KEY_PROG1>;
+-			gpios = <&gpio0_ports 60 GPIO_ACTIVE_LOW>;
++			gpios = <&gpio1_ports 29 GPIO_ACTIVE_LOW>;
+ 			debounce-interval = <30>;
+ 		};
+@@ -68,1 +69,1 @@
+-	reset-gpios = <&gpio0_ports 62 GPIO_ACTIVE_HIGH>;
++	reset-gpios = <&gpio1_ports 30 GPIO_ACTIVE_HIGH>;
+-- 
+2.43.0

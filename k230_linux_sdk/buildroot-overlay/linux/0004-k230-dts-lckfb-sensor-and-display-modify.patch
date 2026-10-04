@@ -1,0 +1,41 @@
+From 77ff6cf16752ca3da8d2caac5c98d33ce139daf0 Mon Sep 17 00:00:00 2001
+From: wangjianxin <wangjianxin@canaan-creative.com>
+Date: Tue, 18 Feb 2025 03:52:50 +0000
+Subject: [PATCH] k230:dts:lckfb sensor and display modify
+
+Signed-off-by: wangjianxin <wangjianxin@canaan-creative.com>
+---
+ arch/riscv/boot/dts/canaan/k230-canmv-lckfb-lcd.dts | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+ mode change 100644 => 100755 arch/riscv/boot/dts/canaan/k230-canmv-lckfb-lcd.dts
+
+diff --git a/arch/riscv/boot/dts/canaan/k230-canmv-lckfb-lcd.dts b/arch/riscv/boot/dts/canaan/k230-canmv-lckfb-lcd.dts
+old mode 100644
+new mode 100755
+index f700de1e0..6dc6ed035
+--- a/arch/riscv/boot/dts/canaan/k230-canmv-lckfb-lcd.dts
++++ b/arch/riscv/boot/dts/canaan/k230-canmv-lckfb-lcd.dts
+@@ -61,9 +61,9 @@ &i2c3 {
+ 	touchscreen@38 {
+ 		compatible = "edt,edt-ft5306";
+ 		reg = <0x38>;
+-		reset-gpios = <&gpio0_ports 21 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&gpio0_ports 24 GPIO_ACTIVE_LOW>;
+ 		interrupt-parent = <&gpio0_ports>;
+-		interrupts = <22 IRQ_TYPE_EDGE_FALLING>;
++		interrupts = <23 IRQ_TYPE_EDGE_FALLING>;
+ 	};
+ };
+ 
+@@ -84,7 +84,7 @@ K230_RESET_CSI2_DONE_BIT K230_RESET_CSI2_ASSERT_BIT>,
+ 
+ 
+ &lcd {
+-	dsi_reset-gpios = <&gpio0_ports 20 GPIO_ACTIVE_HIGH>;
++	dsi_reset-gpios = <&gpio0_ports 22 GPIO_ACTIVE_HIGH>;
+ 	backlight_gpio-gpios = <&gpio0_ports 25 GPIO_ACTIVE_HIGH>;
+ };
+ &mmc_sd0 {
+-- 
+2.25.1
+

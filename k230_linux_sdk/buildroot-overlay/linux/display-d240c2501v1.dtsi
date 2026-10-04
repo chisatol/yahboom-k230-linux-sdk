@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * D240C2501V1 2.4" MIPI DSI LCD
+ * 480x640, ST7701S IC, 2 lane
+ * Init sequence based on factory DX2.4 VGA reference
+ */
+
+&vo {
+	vth_line = <10>;
+};
+
+&dsi {
+	ports {
+		port@1 {
+			reg = <1>;
+			dsi_out_d240c2501: endpoint {
+				remote-endpoint = <&d240c2501_in>;
+			};
+		};
+	};
+
+	lcd: panel@0 {
+		compatible = "canaan,universal";
+		reg = <0>;
+
+		panel-width-mm = <36>;
+		panel-height-mm = <49>;
+		panel-dsi-lane = <2>;
+
+		/* Factory init sequence from DX2.4 VGA.txt */
+		/* Format: cmd_type delay payload_len data... */
+		/* cmd_type: 05=1byte, 15=2byte, 39=multi-byte */
+		/* delay: ms, payload_len: bytes of data following */
+		panel-init-sequence = [
+			/* Software Reset */
+			05 78 01 01
+			/* Page 0x13 */
+			39 00 06 FF 77 01 00 00 13
+			15 00 02 EF 08
+			/* Page 0x10 */
+			39 00 06 FF 77 01 00 00 10
+			39 00 03 C0 4F 00
+			39 00 03 C1 10 0C
+			39 00 03 C2 37 04
+			/* X-dir rotate: 0x00=0deg, 0x04=180deg */
+			15 00 02 C7 00
+			15 00 02 CC 10
+			39 00 11 B0 00 0B 13 0D 10 07 02 08 07 1F 04 11 0F 28 2F 1F
+			39 00 11 B1 00 0C 13 0C 10 05 02 08 08 1E 05 13 11 27 30 1F
+			/* Page 0x11 */
+			39 00 06 FF 77 01 00 00 11
+			15 00 02 B0 4A
+			15 00 02 B1 4A
+			15 00 02 B2 87
+			15 00 02 B3 80
+			15 00 02 B5 45
+			15 00 02 B7 85
+			15 00 02 B8 20
+			15 00 02 C0 09
+			15 00 02 C1 78
+			15 00 02 C2 78
+			15 64 02 D0 88
+			39 00 04 E0 00 00 02
+			39 00 0C E1 04 B0 06 B0 05 B0 07 B0 00 44 44
+			39 00 0D E2 20 20 44 44 96 A0 00 00 96 A0 00 00
+			39 00 05 E3 00 00 22 22
+			39 00 03 E4 44 44
+			39 00 11 E5 0C 90 B0 A0 0E 92 B0 A0 08 8C B0 A0 0A 8E B0 A0
+			39 00 05 E6 00 00 22 22
+			39 00 03 E7 44 44
+			39 00 11 E8 0D 91 B0 A0 0F 93 B0 A0 09 8D B0 A0 0B 8F B0 A0
+			39 00 03 E9 36 00
+			39 00 08 EB 00 00 E4 E4 44 88 40
+			39 00 11 ED C1 A2 BF 0F 67 45 FF FF FF FF 54 76 F0 FB 2A 1C
+			39 00 07 EF 10 0D 04 08 3F 1F
+			/* Page 0x13 */
+			39 00 06 FF 77 01 00 00 13
+			39 00 03 E8 00 0E
+			/* Page 0x00 */
+			39 00 06 FF 77 01 00 00 00
+			/* Sleep Out: delay 120ms */
+			05 78 01 11
+			/* Page 0x13 */
+			39 00 06 FF 77 01 00 00 13
+			39 14 03 E8 00 0C
+			39 14 03 E8 00 00
+			/* Page 0x00 */
+			39 00 06 FF 77 01 00 00 00
+			/* U&D Y-DIR rotate: 0x00=0deg, 0x10=180deg */
+			15 00 02 36 00
+			/* Display On: delay 20ms */
+			05 14 01 29
+		];
+
+		display-timings {
+			timing-0 {
+				clock-frequency = <21000000>;
+				hactive = <480>;
+				vactive = <640>;
+				hfront-porch = <10>;
+				hback-porch = <10>;
+				hsync-len = <2>;
+				vfront-porch = <30>;
+				vback-porch = <30>;
+				vsync-len = <2>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@0 {
+				reg = <0>;
+				d240c2501_in: endpoint {
+					remote-endpoint = <&dsi_out_d240c2501>;
+				};
+			};
+		};
+	};
+};
