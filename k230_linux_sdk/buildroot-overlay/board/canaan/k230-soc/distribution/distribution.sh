@@ -465,6 +465,12 @@ WIFI_CONFIG_EOF
                 "${distr_rootfs}/etc/systemd/system/multi-user.target.wants/yahboom-usb-mtp.service"
             install -D -m 0755 "${distribution_dir}/yahboom-display-mode.py" \
                 "${distr_rootfs}/usr/local/sbin/yahboom-display-mode.py"
+            install -D -m 0755 "${distribution_dir}/yahboom-desktop-key.py" \
+                "${distr_rootfs}/usr/local/sbin/yahboom-desktop-key.py"
+            install -D -m 0644 "${distribution_dir}/yahboom-desktop-key.service" \
+                "${distr_rootfs}/etc/systemd/system/yahboom-desktop-key.service"
+            ln -sf /etc/systemd/system/yahboom-desktop-key.service \
+                "${distr_rootfs}/etc/systemd/system/multi-user.target.wants/yahboom-desktop-key.service"
             install -D -m 0755 "${distribution_dir}/yahboom-serial-view.sh" \
                 "${distr_rootfs}/usr/local/sbin/yahboom-serial-view"
             install -D -m 0644 "${distribution_dir}/yahboom-serial-shell.sh" \

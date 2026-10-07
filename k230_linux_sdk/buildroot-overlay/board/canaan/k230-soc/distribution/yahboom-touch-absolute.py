@@ -28,6 +28,7 @@ GESTURE_SLOP_PIXELS = 20
 RIGHT_CLICK_DELAY = 0.65
 DRAG_DELAY = 0.50
 SCROLL_STEP_PIXELS = 32
+SCROLL_EDGE_PIXELS = 42
 running = True
 
 
@@ -74,8 +75,8 @@ class ContactCoordinates:
         return self.x, self.y
 
 
-def classify_tap(duration, max_distance):
-    if max_distance >= GESTURE_SLOP_PIXELS:
+def classify_tap(duration, max_distance, scroll_started=False):
+    if scroll_started or max_distance >= GESTURE_SLOP_PIXELS:
         return None
     return 3 if duration >= RIGHT_CLICK_DELAY else 1
 
@@ -184,9 +185,9 @@ def main():
         current_slot = 0
         slots = {}
         scrolling = False
+        scroll_started = False
         suppress_until_release = False
         last_scroll_y = None
-        scroll_contact_ids = None
         scroll_remainder = 0
 
         while running:
@@ -225,36 +226,10 @@ def main():
                                 x11.XFlush(display)
                             active = False
                             dragging = False
-                            suppress_until_release = True
-                            contact_ids = frozenset(
-                                slot_id for slot_id, slot in slots.items()
-                                if slot.get("tracking", -1) >= 0 and
-                                ABS_MT_POSITION_X in slot and
-                                ABS_MT_POSITION_Y in slot
-                            )
-                            screen_ys = [map_position(
-                                contact[ABS_MT_POSITION_X], contact[ABS_MT_POSITION_Y],
-                                width, height, x_min, x_max, y_min, y_max,
-                            )[1] for contact in contacts]
-                            center_y = sum(screen_ys) / len(screen_ys)
-                            if not scrolling or contact_ids != scroll_contact_ids:
-                                scrolling = True
-                                scroll_contact_ids = contact_ids
-                                last_scroll_y = center_y
-                                scroll_remainder = 0
-                            elif last_scroll_y is not None:
-                                steps, scroll_remainder = scroll_steps(
-                                    last_scroll_y - center_y, scroll_remainder
-                                )
-                                button = 5 if steps > 0 else 4
-                                for _ in range(abs(steps)):
-                                    click(xtst, x11, display, button)
-                            last_scroll_y = center_y
-                            continue
-                        if scrolling:
                             scrolling = False
                             last_scroll_y = None
-                            scroll_contact_ids = None
+                            suppress_until_release = True
+                            continue
                         if suppress_until_release:
                             if not pressed and not contacts:
                                 suppress_until_release = False
@@ -270,6 +245,10 @@ def main():
                                 *raw_position, width, height,
                                 x_min, x_max, y_min, y_max,
                             )
+                            scrolling = start_x >= width - SCROLL_EDGE_PIXELS
+                            scroll_started = False
+                            last_scroll_y = start_y if scrolling else None
+                            scroll_remainder = 0
                             move_pointer(xtst, display, screen, start_x, start_y)
                             x11.XFlush(display)
                         elif pressed and active and raw_position is not None:
@@ -279,11 +258,21 @@ def main():
                             )
                             distance = math.hypot(x - start_x, y - start_y)
                             max_distance = max(max_distance, distance)
-                            move_pointer(xtst, display, screen, x, y)
-                            if not dragging and should_start_drag(
-                                    time.monotonic() - started, max_distance):
-                                xtst.XTestFakeButtonEvent(display, 1, 1, 0)
-                                dragging = True
+                            if scrolling:
+                                steps, scroll_remainder = scroll_steps(
+                                    last_scroll_y - y, scroll_remainder
+                                )
+                                button = 4 if steps > 0 else 5
+                                for _ in range(abs(steps)):
+                                    click(xtst, x11, display, button)
+                                    scroll_started = True
+                                last_scroll_y = y
+                            else:
+                                move_pointer(xtst, display, screen, x, y)
+                                if not dragging and should_start_drag(
+                                        time.monotonic() - started, max_distance):
+                                    xtst.XTestFakeButtonEvent(display, 1, 1, 0)
+                                    dragging = True
                             x11.XFlush(display)
                         elif not pressed and active:
                             if dragging:
@@ -291,12 +280,16 @@ def main():
                                 x11.XFlush(display)
                             else:
                                 button = classify_tap(
-                                    time.monotonic() - started, max_distance
+                                    time.monotonic() - started, max_distance,
+                                    scroll_started,
                                 )
                                 if button:
                                     click(xtst, x11, display, button)
                             active = False
                             dragging = False
+                            scrolling = False
+                            scroll_started = False
+                            last_scroll_y = None
                             max_distance = 0.0
     except (OSError, RuntimeError) as error:
         print("Absolute touch failed: %s" % error, file=sys.stderr, flush=True)

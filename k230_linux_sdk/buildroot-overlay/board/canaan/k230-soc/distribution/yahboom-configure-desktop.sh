@@ -9,6 +9,18 @@ fi
 rootfs=$1
 distribution_dir=$(cd "$(dirname "$0")" && pwd)
 
+# KEY1 owns desktop startup so the panel boots fully blank by default.
+if [ -d "${rootfs}/etc/systemd/system" ]; then
+    find "${rootfs}/etc/systemd/system" -type l -print0 |
+        while IFS= read -r -d '' link; do
+            case "$(readlink "${link}")" in
+                *lightdm.service|*/display-manager.service)
+                    rm -f "${link}"
+                    ;;
+            esac
+        done
+fi
+
 openbox_config="${rootfs}/root/.config/openbox/lxde-rc.xml"
 openbox_default="${rootfs}/etc/xdg/openbox/LXDE/rc.xml"
 if [ ! -s "${openbox_config}" ] ||
@@ -31,6 +43,17 @@ install -D -m 0644 "${distribution_dir}/yahboom-display-mode.desktop" \
     "${rootfs}/etc/xdg/autostart/yahboom-display-mode.desktop"
 install -D -m 0755 "${distribution_dir}/yahboom-camera-preview" \
     "${rootfs}/usr/local/sbin/yahboom-camera-preview"
+install -D -m 0755 "${distribution_dir}/yahboom-camera-mode.py" \
+    "${rootfs}/usr/local/sbin/yahboom-camera-mode.py"
+install -D -m 0644 "${distribution_dir}/yahboom-camera-preview.service" \
+    "${rootfs}/etc/systemd/system/yahboom-camera-preview.service"
+install -D -m 0755 "${distribution_dir}/yahboom-desktop-key.py" \
+    "${rootfs}/usr/local/sbin/yahboom-desktop-key.py"
+install -D -m 0644 "${distribution_dir}/yahboom-desktop-key.service" \
+    "${rootfs}/etc/systemd/system/yahboom-desktop-key.service"
+mkdir -p "${rootfs}/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/yahboom-desktop-key.service \
+    "${rootfs}/etc/systemd/system/multi-user.target.wants/yahboom-desktop-key.service"
 install -D -m 0644 "${distribution_dir}/yahboom-camera.desktop" \
     "${rootfs}/usr/share/applications/yahboom-camera.desktop"
 if [ -e "${rootfs}/root/Desktop/Camera.desktop" ]; then

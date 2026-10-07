@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import glob
+import fcntl
 import os
 import select
 import struct
@@ -10,6 +11,7 @@ import time
 EV_KEY = 1
 KEY_PROG1 = 148
 INPUT_EVENT = struct.Struct("@llHHi")
+CAMERA_RETURN_MARKER = "/run/yahboom-camera-return"
 touch_process = None
 
 
@@ -44,35 +46,40 @@ def stop_touch():
     touch_process = None
 
 
-def advance_mode(mode):
-    if mode == "off":
-        set_dpms("on")
-        try:
-            start_touch()
-        except (OSError, subprocess.CalledProcessError) as error:
-            print("Desktop visible, touch failed to start: %s" % error, flush=True)
-        return "desktop"
+def close_desktop():
     stop_touch()
-    set_dpms("off")
-    return "off"
+    subprocess.run(["xset", "dpms", "force", "off"], check=False)
+    time.sleep(0.2)
+    tty = os.open("/dev/tty0", os.O_RDWR | os.O_CLOEXEC)
+    try:
+        fcntl.ioctl(tty, 0x5606, 8)  # VT_ACTIVATE
+        fcntl.ioctl(tty, 0x5607, 8)  # VT_WAITACTIVE
+    finally:
+        os.close(tty)
+    tty = os.open("/dev/tty8", os.O_RDWR | os.O_CLOEXEC)
+    try:
+        fcntl.ioctl(tty, 0x4B3B, struct.pack("@i", 1))  # KDSETMODE, KD_GRAPHICS
+    finally:
+        os.close(tty)
+    subprocess.run(["systemctl", "stop", "lightdm.service"], check=True)
 
 
 def initialize_display():
+    if os.path.exists(CAMERA_RETURN_MARKER):
+        os.unlink(CAMERA_RETURN_MARKER)
     for attempt in range(30):
         try:
             subprocess.run(["xset", "+dpms"], check=True)
             subprocess.run(["xset", "s", "off"], check=True)
             subprocess.run(["xset", "s", "noblank"], check=True)
             subprocess.run(["xset", "dpms", "0", "0", "0"], check=True)
-            set_dpms("off")
+            set_dpms("on")
             break
         except (OSError, subprocess.CalledProcessError) as error:
             if attempt == 29:
                 print("Could not switch the panel off: %s" % error, flush=True)
             else:
                 time.sleep(1)
-
-
 def open_event_devices(poller, devices):
     for path in glob.glob("/dev/input/event*"):
         if path in devices:
@@ -97,11 +104,14 @@ def close_device(poller, devices, path):
 
 def main():
     initialize_display()
+    try:
+        start_touch()
+    except (OSError, subprocess.CalledProcessError) as error:
+        print("Desktop touch failed to start: %s" % error, flush=True)
 
     poller = select.poll()
     devices = {}
     open_event_devices(poller, devices)
-    mode = "off"
     key_down = False
 
     while True:
@@ -129,11 +139,13 @@ def main():
                       value == 1 and not key_down):
                     key_down = True
                     try:
-                        mode = advance_mode(mode)
-                        print("KEY1 switched display to %s" % mode, flush=True)
+                        close_desktop()
+                        print("KEY1 stopped desktop session", flush=True)
+                        return
                     except (OSError, subprocess.CalledProcessError) as error:
                         print("KEY1 display switch failed: %s" % error, flush=True)
 
 
 if __name__ == "__main__":
     main()
+V4L2+DRM

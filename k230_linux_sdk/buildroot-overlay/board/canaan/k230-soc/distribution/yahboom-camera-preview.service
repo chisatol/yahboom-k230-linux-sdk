@@ -1,0 +1,12 @@
+[Unit]
+Description=Yahboom full-screen GC2093 camera preview
+After=vvcam.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yahboom-camera-mode.py
+Restart=no
+KillMode=control-group
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal

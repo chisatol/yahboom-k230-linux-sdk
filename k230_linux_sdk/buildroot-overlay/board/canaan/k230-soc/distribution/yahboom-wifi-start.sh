@@ -31,12 +31,24 @@ if [ ! -r "$config" ]; then
     echo "Missing Wi-Fi settings: $config" >&2
     exit 1
 fi
+if ! python3 - "$config" <<'PY'
+import sys
+
+data = open(sys.argv[1], "rb").read()
+data.decode("utf-8")
+if b"\0" in data:
+    raise SystemExit(1)
+PY
+then
+    echo "Wi-Fi settings must be UTF-8 text without NUL bytes: $config" >&2
+    exit 1
+fi
 # shellcheck source=/dev/null
 source "$config"
 
 wifi_if="${WIFI_INTERFACE:-wlan0}"
 if [ -z "$wifi_if" ]; then
-    for _ in $(seq 1 30); do
+    for _ in $(seq 1 10); do
         wifi_if=$(nmcli -t -f DEVICE,TYPE device status | awk -F: '$2 == "wifi" && $1 !~ /^p2p-dev-/ { print $1; exit }')
         [ -n "$wifi_if" ] && break
         sleep 1
@@ -77,6 +89,68 @@ fi
 
 if [ "$wifi_connected" = true ]; then
     echo "Connected to configured Wi-Fi: $WIFI_SSID"
+    wifi_ip=""
+    for _ in $(seq 1 30); do
+        wifi_ip=$(ip -4 -o addr show dev "$wifi_if" scope global |
+            awk 'NR == 1 { sub(/\/.*/, "", $4); print $4; exit }')
+        [ -n "$wifi_ip" ] && break
+        sleep 1
+    done
+
+    if [ -n "$wifi_ip" ]; then
+        if ! python3 - "$config" "$wifi_ip" <<'PY'
+import ipaddress
+import os
+import stat
+import sys
+import tempfile
+
+path, address = sys.argv[1:]
+ipaddress.IPv4Address(address)
+with open(path, "rb") as source:
+    original = source.read()
+text = original.decode("utf-8")
+if "\0" in text:
+    raise SystemExit("Wi-Fi config contains NUL bytes; refusing to rewrite it")
+
+begin = "# BEGIN AUTO-GENERATED WI-FI IP"
+end = "# END AUTO-GENERATED WI-FI IP"
+lines = []
+skipping = False
+for line in text.splitlines():
+    if line == begin and not skipping:
+        skipping = True
+    elif line == end and skipping:
+        skipping = False
+    elif not skipping:
+        lines.append(line)
+if skipping:
+    raise SystemExit("Wi-Fi config has an incomplete generated IP block")
+
+updated = "\n".join(lines).rstrip("\n")
+updated += f"\n\n{begin}\n# Current Wi-Fi internal IPv4 address: {address}\n{end}\n"
+directory = os.path.dirname(path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".wifi-config.", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as target:
+        target.write(updated)
+    os.chmod(temporary, stat.S_IMODE(os.stat(path).st_mode))
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+        then
+            echo "Could not update Wi-Fi config comments" >&2
+            exit 1
+        fi
+        echo "Recorded Wi-Fi internal IPv4 address: $wifi_ip in $config"
+    else
+        echo "Wi-Fi connected, but no global IPv4 address appeared on $wifi_if" >&2
+    fi
     exit 0
 fi
 

@@ -25,7 +25,7 @@ void v4l2_drm_default_context(struct v4l2_drm_context* ctx) {
     ctx->device = 0;
     ctx->video_fd = -1;
     ctx->video_format = V4L2_PIX_FMT_NV12;
-    ctx->display_format = DRM_FORMAT_NV12;
+    ctx->display_format = 0;
     ctx->display = true;
     ctx->buffer_num = DRM_BUFFERING+2;
     ctx->plane = NULL;
@@ -110,7 +110,11 @@ int v4l2_drm_setup(struct v4l2_drm_context context[], unsigned num, struct displ
                     else
                         CKE(display_allocate_buffer(context[i].plane, context[i].width, context[i].height) == NULL, close);
                 }
-                else {
+                else if ((context[i].drm_rotation == rotation_90) ||
+                         (context[i].drm_rotation == rotation_270)) {
+                    context[i].plane->drm_rotation = context[i].drm_rotation;
+                    CKE(display_allocate_buffer(context[i].plane, context[i].width, context[i].height) == NULL, close);
+                } else {
                     CKE(display_allocate_buffer(context[i].plane, context[i].width, context[i].height) == NULL, close);
                 }
             }

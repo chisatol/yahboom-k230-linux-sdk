@@ -1,0 +1,15 @@
+[Unit]
+Description=Yahboom KEY1 desktop wake listener
+After=systemd-udev-settle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yahboom-desktop-key.py
+Restart=always
+RestartSec=1
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -129,9 +129,6 @@ static int parse_cmd(int argc, char* argv[], struct v4l2_drm_context* context) {
                 break;
             case 'f':
                 context[context_idx].video_format = to_v4l2_fourcc(optarg);
-                if (context[context_idx].display_format == 0) {
-                    context[context_idx].display = false;
-                }
                 break;
             case 'r':
                 context[context_idx].drm_rotation = atoi(optarg);

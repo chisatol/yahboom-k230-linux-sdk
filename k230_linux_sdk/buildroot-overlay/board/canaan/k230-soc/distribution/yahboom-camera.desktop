@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Camera Check
-Comment=Check GC2093 capture and open a live preview
+Name=Camera
+Comment=Open the GC2093 live preview
 Exec=/usr/local/sbin/yahboom-camera-preview
 Icon=camera-video
-Terminal=true
+Terminal=false
 Categories=AudioVideo;Video;
-StartupNotify=true
+StartupNotify=false
