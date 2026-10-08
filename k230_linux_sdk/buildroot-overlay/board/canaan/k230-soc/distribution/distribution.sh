@@ -325,7 +325,7 @@ EOFCHROOT
 minimum-vt=7
 
 [Seat:*]
-autologin-user=root
+autologin-user=elaina
 autologin-user-timeout=0
 user-session=LXDE
 autologin-session=LXDE
@@ -342,7 +342,6 @@ LIGHTDM_EOF
             exit 1
         fi
         sed -i "s|^root:[^:]*:|root:${root_password_hash}:|" "${distr_rootfs}/etc/shadow"
-        sed -i '/pam_succeed_if.so user != root quiet_success/d' "${distr_rootfs}/etc/pam.d/lightdm-autologin"
         mkdir -p "${distr_rootfs}/etc/ssh/sshd_config.d"
         printf 'PermitRootLogin yes\nPasswordAuthentication yes\nPubkeyAuthentication yes\n' \
             > "${distr_rootfs}/etc/ssh/sshd_config.d/99-k230-root-login.conf"
@@ -385,6 +384,7 @@ LIGHTDM_EOF
             mkdir -p "${distr_rootfs}/lib/modules"
             cp -a "${target_dir}/lib/modules/${module_version}" "${distr_rootfs}/lib/modules/"
 
+            cp /usr/bin/qemu-riscv64-static "${distr_rootfs}/usr/bin/"
             if [ ! -x "${distr_rootfs}/usr/bin/xinput" ] ||
                [ ! -x "${distr_rootfs}/usr/bin/tmux" ] ||
                [ ! -e "${distr_rootfs}/usr/lib/riscv64-linux-gnu/libXtst.so.6" ] ||
@@ -393,21 +393,36 @@ LIGHTDM_EOF
                [ ! -x "${distr_rootfs}/usr/sbin/hostapd" ] ||
                [ ! -x "${distr_rootfs}/usr/sbin/wpa_supplicant" ] ||
                [ ! -x "${distr_rootfs}/usr/bin/firefox-esr" ] ||
-               [ ! -x "${distr_rootfs}/usr/bin/xhost" ]; then
+               [ ! -x "${distr_rootfs}/usr/bin/xhost" ] ||
+               [ ! -x "${distr_rootfs}/usr/bin/sudo" ]; then
                 print_blue "Installing desktop input, networking, browser and serial-console runtime..."
                 cp /usr/bin/qemu-riscv64-static "${distr_rootfs}/usr/bin/"
                 chroot "${distr_rootfs}" /usr/bin/qemu-riscv64-static /usr/bin/apt-get update
-                chroot "${distr_rootfs}" /usr/bin/qemu-riscv64-static /usr/bin/apt-get install -y --no-install-recommends libxtst6 tmux xinput network-manager network-manager-gnome dnsmasq-base hostapd wpasupplicant firefox-esr x11-xserver-utils
-                rm -f "${distr_rootfs}/usr/bin/qemu-riscv64-static"
+                chroot "${distr_rootfs}" /usr/bin/qemu-riscv64-static /usr/bin/apt-get install -y --no-install-recommends libxtst6 tmux xinput network-manager network-manager-gnome dnsmasq-base hostapd wpasupplicant firefox-esr x11-xserver-utils sudo
             fi
 
-            if ! grep -q '^k230-browser:' "${distr_rootfs}/etc/passwd"; then
-                local browser_root
-                browser_root=$(cd "${distr_rootfs}" && pwd -P)
-                useradd --root "${browser_root}" --system --create-home \
-                    --home-dir /home/k230-browser --shell /usr/sbin/nologin \
-                    --password '!' k230-browser
+            local elaina_password_hash
+            elaina_password_hash=$(openssl passwd -6 '6')
+            local desktop_root
+            desktop_root=$(cd "${distr_rootfs}" && pwd -P)
+            if ! grep -q '^elaina:' "${distr_rootfs}/etc/passwd"; then
+                chroot "${desktop_root}" /usr/bin/qemu-riscv64-static /usr/sbin/useradd \
+                    --create-home --user-group \
+                    --home-dir /home/elaina --shell /bin/bash \
+                    --groups sudo,video,input,render,netdev,plugdev,dialout \
+                    --password "${elaina_password_hash}" elaina
+            else
+                chroot "${desktop_root}" /usr/bin/qemu-riscv64-static /usr/sbin/usermod \
+                    --shell /bin/bash \
+                    --append --groups sudo,video,input,render,netdev,plugdev,dialout \
+                    --password "${elaina_password_hash}" elaina
             fi
+            rm -f "${distr_rootfs}/usr/bin/qemu-riscv64-static"
+            install -D -m 0440 /dev/null "${distr_rootfs}/etc/sudoers.d/elaina-desktop"
+            printf 'elaina ALL=(root) NOPASSWD: /usr/bin/systemctl stop lightdm.service\nelaina ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block yahboom-camera-preview.service\n' \
+                > "${distr_rootfs}/etc/sudoers.d/elaina-desktop"
+            chown root:root "${distr_rootfs}/etc/sudoers.d/elaina-desktop"
+
             install -D -m 0755 "${distribution_dir}/yahboom-firefox.sh" \
                 "${distr_rootfs}/usr/local/sbin/k230-firefox"
             if [ -f "${distr_rootfs}/usr/share/applications/firefox-esr.desktop" ]; then

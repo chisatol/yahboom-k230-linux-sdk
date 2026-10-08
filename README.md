@@ -14,7 +14,7 @@
 | GC2093 相机 | VVCAM/ISP 使用 GC2093 mode 0。实机识别传感器，VVCAM 注册 `/dev/video2` 至 `/dev/video4`；`/dev/video2` 支持 NV12，1920x1080@30，V4L2 采集测试正常。桌面应用菜单有 “Camera Check” 实时预览入口。 | ✓ 相机采集和画面显示正常 |
 | Wi-Fi | RTL8189FS 模块随系统加载；NetworkManager 管理 Wi-Fi。启动时优先尝试 `/root/wifi-config.sh` 中配置的上游网络，失败后以 hostapd/dnsmasq 启动备用热点。上游连接成功后，脚本读取无线接口的 IPv4 地址，并更新配置文件末尾的自动生成注释块；`wlan1` 设为不受 NetworkManager 管理，避免与板载 Wi-Fi 接口冲突。 | ✓ 联网和 IP 注释更新经 SSH 实测 |
 | USB 文件访问 | USB gadget 组合 MTP + ADB，MTP 可用于电脑与开发板间传文件、编辑根目录 Wi-Fi 配置；uMTPrd 设置为断连后继续运行，以便 USB 主机重新连接时再次枚举。该模式不是 USB 大容量存储盘。 | ✓ 服务 active、UDC 绑定经 SSH 检查；物理拔插重连未单独验收 |
-| Debian 桌面 | Debian 13 + LXDE，LightDM 自动以 root 登录；Firefox ESR、NetworkManager 图形组件已加入镜像。桌面壁纸使用 Debian 默认背景。 | ✓ 桌面与浏览器运行正常 |
+| Debian 桌面 | Debian 13 + LXDE，LightDM 自动以普通用户 `elaina` 登录；桌面、终端和 Firefox ESR 均以 `elaina` 运行。该用户属于 sudo、video、input、render、netdev、plugdev 和 dialout 组；sudo 可管理系统，桌面关屏与启动相机使用受限的免密码 systemctl 规则。root 账户保留用于维护。 | 已配置，待新镜像实机验证 |
 | 调试串口与 SSH | U-Boot/Linux console 配置到 115200 串口；默认 root 密码为 `root`，SSH 密码认证开启。此密码是公开默认值，部署前应修改。 | ✓ 串口和 SSH 访问正常 |
 | Openbox 配置 | 镜像构建时检查 root 用户 LXDE Openbox XML；缺失、空白或 XML 错误时，从系统默认配置生成有效文件。 | ✓ XML 检查通过，构建期修复已配置 |
 
@@ -88,12 +88,22 @@ pkexec env YAHBOOM_WIFI_CONFIG_SOURCE=/绝对路径/wifi-config.sh \
 
 USB Type-C 口在当前设备树中配置为 USB Device，电脑端应按 MTP/ADB 设备使用；它不会作为 U 盘盘符出现，也不能在当前硬件配置下直接接 USB 键鼠。
 
-默认 root 密码为 `root`。需要自定义密码时，可传入 SHA-512 哈希：
+镜像默认创建日常用户 `elaina`，密码为 `6`。该密码非常弱，部署到不可信网络前请立即修改。构建时传入 SHA-512 密码哈希：
+
+```bash
+ELAINA_HASH="$(openssl passwd -6)"
+pkexec env YAHBOOM_ELAINA_PASSWORD_HASH="${ELAINA_HASH}" make debian
+unset ELAINA_HASH
+```
+
+root 账户仍保留，默认密码为 `root`，SSH root 密码登录仍开启。需要自定义 root 密码时，可一并传入 SHA-512 哈希：
 
 ```bash
 ROOT_HASH="$(openssl passwd -6)"
-pkexec env YAHBOOM_ROOT_PASSWORD_HASH="$ROOT_HASH" make debian
-unset ROOT_HASH
+ELAINA_HASH="$(openssl passwd -6)"
+pkexec env YAHBOOM_ROOT_PASSWORD_HASH="${ROOT_HASH}" \
+  YAHBOOM_ELAINA_PASSWORD_HASH="${ELAINA_HASH}" make debian
+unset ROOT_HASH ELAINA_HASH
 ```
 
 最终镜像位于：

@@ -53,8 +53,12 @@ case "$1" in
       exit 1
     fi
 
-    if ! printf '%s' "91500000.usb" > "${g1}/UDC"; then
+    if ! printf '%s\n' "91500000.usb" > "${g1}/UDC"; then
       echo "Failed to bind USB gadget to 91500000.usb" >&2
+      exit 1
+    fi
+    if [ "$(cat "${g1}/UDC")" != "91500000.usb" ]; then
+      echo "USB gadget controller did not remain bound" >&2
       exit 1
     fi
     ;;

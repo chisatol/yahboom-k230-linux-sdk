@@ -5,4 +5,4 @@ if systemctl is-active --quiet yahboom-camera-preview.service; then
     exit 0
 fi
 
-systemctl start --no-block yahboom-camera-preview.service
+sudo -n /usr/bin/systemctl start --no-block yahboom-camera-preview.service

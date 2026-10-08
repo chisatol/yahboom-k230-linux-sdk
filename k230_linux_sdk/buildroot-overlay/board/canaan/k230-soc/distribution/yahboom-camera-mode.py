@@ -11,7 +11,7 @@ import time
 EV_KEY = 1
 KEY_PROG1 = 148
 INPUT_EVENT = struct.Struct("@llHHi")
-RETURN_MARKER = "/run/yahboom-camera-return"
+RETURN_MARKER = "/home/elaina/.local/state/yahboom-camera-return"
 stopping = False
 return_requested = False
 
@@ -39,6 +39,7 @@ def wait_for_key1(camera):
     devices = {}
     key_down = False
     key1_pressed = False
+    last_key_action = 0.0
 
     while (camera.poll() is None and not stopping and not return_requested and
            not key1_pressed):
@@ -75,6 +76,10 @@ def wait_for_key1(camera):
                     key_down = False
                 elif value == 1 and not key_down:
                     key_down = True
+                    now = time.monotonic()
+                    if now - last_key_action < 0.75:
+                        continue
+                    last_key_action = now
                     key1_pressed = True
                     break
             if key1_pressed:

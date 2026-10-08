@@ -8,6 +8,13 @@ fi
 
 rootfs=$1
 distribution_dir=$(cd "$(dirname "$0")" && pwd)
+desktop_home="${rootfs}/home/elaina"
+desktop_uid=$(awk -F: '$1 == "elaina" { print $3 }' "${rootfs}/etc/passwd")
+desktop_gid=$(awk -F: '$1 == "elaina" { print $4 }' "${rootfs}/etc/passwd")
+if [ -z "${desktop_uid}" ] || [ -z "${desktop_gid}" ] || [ ! -d "${desktop_home}" ]; then
+    echo "Missing elaina account or home directory in ${rootfs}" >&2
+    exit 1
+fi
 
 # KEY1 owns desktop startup so the panel boots fully blank by default.
 if [ -d "${rootfs}/etc/systemd/system" ]; then
@@ -21,7 +28,7 @@ if [ -d "${rootfs}/etc/systemd/system" ]; then
         done
 fi
 
-openbox_config="${rootfs}/root/.config/openbox/lxde-rc.xml"
+openbox_config="${desktop_home}/.config/openbox/lxde-rc.xml"
 openbox_default="${rootfs}/etc/xdg/openbox/LXDE/rc.xml"
 if [ ! -s "${openbox_config}" ] ||
    ! python3 -c 'import sys, xml.etree.ElementTree as ET; ET.parse(sys.argv[1])' \
@@ -56,8 +63,8 @@ ln -sf /etc/systemd/system/yahboom-desktop-key.service \
     "${rootfs}/etc/systemd/system/multi-user.target.wants/yahboom-desktop-key.service"
 install -D -m 0644 "${distribution_dir}/yahboom-camera.desktop" \
     "${rootfs}/usr/share/applications/yahboom-camera.desktop"
-if [ -e "${rootfs}/root/Desktop/Camera.desktop" ]; then
-    rm -f "${rootfs}/root/Desktop/Camera.desktop"
+if [ -e "${desktop_home}/Desktop/Camera.desktop" ]; then
+    rm -f "${desktop_home}/Desktop/Camera.desktop"
 fi
 
 calibration="${rootfs}/etc/X11/xorg.conf.d/99-calibration.conf"
@@ -73,7 +80,7 @@ Section "InputClass"
 EndSection
 XORG_EOF
 
-desktop_items="${rootfs}/root/.config/pcmanfm/LXDE/desktop-items-0.conf"
+desktop_items="${desktop_home}/.config/pcmanfm/LXDE/desktop-items-0.conf"
 mkdir -p "$(dirname "${desktop_items}")"
 if [ ! -f "${desktop_items}" ]; then
     printf '[*]\n' > "${desktop_items}"
@@ -99,11 +106,13 @@ else
     printf 'wallpaper_mode=stretch\n' >> "${desktop_items}"
 fi
 
-panel_config="${rootfs}/root/.config/lxpanel/LXDE/panels/panel"
+panel_config="${desktop_home}/.config/lxpanel/LXDE/panels/panel"
 mkdir -p "$(dirname "${panel_config}")"
 if [ ! -f "${panel_config}" ]; then
     install -D -m 0644 "${rootfs}/etc/xdg/lxpanel/LXDE/panels/panel" "${panel_config}"
 fi
 sed -i 's/^    height=.*/    height=26/' "${panel_config}"
 
-printf 'Xft.dpi: 96\n' > "${rootfs}/root/.Xresources"
+printf 'Xft.dpi: 96\n' > "${desktop_home}/.Xresources"
+mkdir -p "${desktop_home}/.local/state"
+chown -R "${desktop_uid}:${desktop_gid}" "${desktop_home}"

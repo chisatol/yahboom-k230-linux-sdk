@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 import glob
-import fcntl
 import os
 import select
 import struct
@@ -11,7 +10,7 @@ import time
 EV_KEY = 1
 KEY_PROG1 = 148
 INPUT_EVENT = struct.Struct("@llHHi")
-CAMERA_RETURN_MARKER = "/run/yahboom-camera-return"
+CAMERA_RETURN_MARKER = "/home/elaina/.local/state/yahboom-camera-return"
 touch_process = None
 
 
@@ -49,19 +48,10 @@ def stop_touch():
 def close_desktop():
     stop_touch()
     subprocess.run(["xset", "dpms", "force", "off"], check=False)
-    time.sleep(0.2)
-    tty = os.open("/dev/tty0", os.O_RDWR | os.O_CLOEXEC)
-    try:
-        fcntl.ioctl(tty, 0x5606, 8)  # VT_ACTIVATE
-        fcntl.ioctl(tty, 0x5607, 8)  # VT_WAITACTIVE
-    finally:
-        os.close(tty)
-    tty = os.open("/dev/tty8", os.O_RDWR | os.O_CLOEXEC)
-    try:
-        fcntl.ioctl(tty, 0x4B3B, struct.pack("@i", 1))  # KDSETMODE, KD_GRAPHICS
-    finally:
-        os.close(tty)
-    subprocess.run(["systemctl", "stop", "lightdm.service"], check=True)
+    subprocess.run(
+        ["sudo", "-n", "/usr/bin/systemctl", "stop", "lightdm.service"],
+        check=True,
+    )
 
 
 def initialize_display():
@@ -113,6 +103,7 @@ def main():
     devices = {}
     open_event_devices(poller, devices)
     key_down = False
+    last_key_action = 0.0
 
     while True:
         open_event_devices(poller, devices)
@@ -138,6 +129,10 @@ def main():
                 elif (event_type == EV_KEY and code == KEY_PROG1 and
                       value == 1 and not key_down):
                     key_down = True
+                    now = time.monotonic()
+                    if now - last_key_action < 0.75:
+                        continue
+                    last_key_action = now
                     try:
                         close_desktop()
                         print("KEY1 stopped desktop session", flush=True)
@@ -148,4 +143,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-V4L2+DRM
