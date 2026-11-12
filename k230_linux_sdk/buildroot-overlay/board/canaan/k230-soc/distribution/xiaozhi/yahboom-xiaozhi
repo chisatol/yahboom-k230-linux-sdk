@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+if systemctl is-active --quiet yahboom-xiaozhi.service; then exit 0; fi
+sudo -n /usr/bin/systemctl start --no-block yahboom-xiaozhi.service

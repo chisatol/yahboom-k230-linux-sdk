@@ -1,0 +1,11 @@
+--- a/sound/soc/codecs/inno_k230.c
++++ b/sound/soc/codecs/inno_k230.c
+@@ -194,7 +194,7 @@ static int snd_inno_ctl_put(struct snd_kcontrol *kcontrol,
+ 		audio_codec_dac_digital_mute(!ucontrol->value.integer.value[0]);
+ 	} else if (kcontrol->private_value == INNO_PCM_CAPTURE_VOLUME) {
+ 		audio_codec_adc_set_micl_gain(ucontrol->value.integer.value[0]);
+-		audio_codec_adc_set_micl_gain(ucontrol->value.integer.value[0]);
++		audio_codec_adc_set_micr_gain(ucontrol->value.integer.value[0]);
+ 
+ 	} else if (kcontrol->private_value == INNO_PCM_CAPTURE_MUTE) {
+ 		audio_codec_adc_micl_mute(!ucontrol->value.integer.value[0]);

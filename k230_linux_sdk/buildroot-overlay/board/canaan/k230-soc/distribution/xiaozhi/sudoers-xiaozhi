@@ -1,0 +1,1 @@
+elaina ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block yahboom-xiaozhi.service

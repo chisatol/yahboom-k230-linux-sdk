@@ -15,6 +15,13 @@
 		mmc1 = &mmc_sd1;
 	};
 	chosen { stdout-path = "serial0:115200n8";	};
+	sound {
+		compatible = "canaan,k230-audio-inno";
+		canaan,model = "K230_I2S_INNO";
+		canaan,k230-i2s-controller = <&i2s>;
+		canaan,k230-audio-codec = <&inno_codec>;
+		status = "okay";
+	};
 	gpio-keys {
 		compatible = "gpio-keys-polled";
 		label = "Yahboom KEY1";
@@ -70,6 +77,13 @@
 	status = "okay";
 };
 &iomux {
+	speaker_enable_pins: speaker-enable-pins {
+		pinmux {
+			pins = "io48";
+			function = "alt0";
+			output-enable;
+		};
+	};
 	key1_pins: key1-pins {
 		pinmux {
 			pins = "io61";
@@ -94,6 +108,20 @@
 			output-disable;
 			bias-pull-up;
 		};
+	};
+};
+
+&gpio1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&speaker_enable_pins>;
+};
+
+&gpio1_ports {
+	speaker-enable-hog {
+		gpio-hog;
+		gpios = <16 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "speaker-enable";
 	};
 };
 &i2c3 {

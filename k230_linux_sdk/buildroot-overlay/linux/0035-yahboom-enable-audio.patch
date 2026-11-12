@@ -1,0 +1,16 @@
+--- a/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
++++ b/arch/riscv/boot/dts/canaan/k230-canmv-yahboom-lcd.dts
+@@ -15,6 +15,13 @@
+ 		mmc1 = &mmc_sd1;
+ 	};
+ 	chosen { stdout-path = "serial0:115200n8";	};
++	sound {
++		compatible = "canaan,k230-audio-inno";
++		canaan,model = "K230_I2S_INNO";
++		canaan,k230-i2s-controller = <&i2s>;
++		canaan,k230-audio-codec = <&inno_codec>;
++		status = "okay";
++	};
+ 	gpio-keys {
+ 		compatible = "gpio-keys-polled";
+ 		label = "Yahboom KEY1";

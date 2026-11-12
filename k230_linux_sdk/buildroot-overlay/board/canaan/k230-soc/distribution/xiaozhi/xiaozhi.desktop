@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=凑企鹅 AI
+Comment=语音助手
+Exec=/usr/local/sbin/yahboom-xiaozhi
+Icon=audio-input-microphone
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupNotify=true

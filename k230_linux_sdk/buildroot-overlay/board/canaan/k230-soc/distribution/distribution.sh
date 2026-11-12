@@ -401,6 +401,37 @@ LIGHTDM_EOF
                 chroot "${distr_rootfs}" /usr/bin/qemu-riscv64-static /usr/bin/apt-get install -y --no-install-recommends libxtst6 tmux xinput network-manager network-manager-gnome dnsmasq-base hostapd wpasupplicant firefox-esr x11-xserver-utils sudo
             fi
 
+            if [ ! -x "${BINARIES_DIR}/xiaozhi/xiaozhi_client" ] || [ ! -x "${BINARIES_DIR}/xiaozhi/xiaozhi-ui" ]; then
+                print_red "Xiaozhi client missing; run distribution/xiaozhi/build.sh first"
+                exit 1
+            fi
+            install -D -m 0755 "${BINARIES_DIR}/xiaozhi/xiaozhi_client" \
+                "${distr_rootfs}/opt/xiaozhi/xiaozhi_client"
+            install -D -m 0755 "${BINARIES_DIR}/xiaozhi/xiaozhi-ui" "${distr_rootfs}/opt/xiaozhi/xiaozhi-ui"
+            install -D -m 0755 "${BINARIES_DIR}/xiaozhi/xiaozhi-wake" "${distr_rootfs}/opt/xiaozhi/xiaozhi-wake"
+            install -D -m 0644 "${BINARIES_DIR}/xiaozhi/kws.kmodel" "${distr_rootfs}/opt/xiaozhi/kws.kmodel"
+            install -D -m 0755 "${BINARIES_DIR}/xiaozhi/xiaozhi-open-wake" "${distr_rootfs}/opt/xiaozhi/xiaozhi-open-wake"
+            install -D -m 0644 "${BINARIES_DIR}/xiaozhi/open-kws/kws.kmodel" "${distr_rootfs}/opt/xiaozhi/open-kws/kws.kmodel"
+            for asset in cmvn_mean.npy cmvn_std.npy mel_fb.npy window512.npy; do
+                install -D -m 0644 "${BINARIES_DIR}/xiaozhi/open-kws/assets/${asset}" "${distr_rootfs}/opt/xiaozhi/open-kws/assets/${asset}"
+            done
+            install -D -m 0755 "${BINARIES_DIR}/xiaozhi/xiaozhi-face" "${distr_rootfs}/opt/xiaozhi/xiaozhi-face"
+            for model in face_detection_320 face_recognition; do
+                install -D -m 0644 "${BINARIES_DIR}/xiaozhi/${model}.kmodel" "${distr_rootfs}/opt/xiaozhi/${model}.kmodel"
+            done
+            for asset in img_joke.png img_naughty.png img_think.png; do
+                install -D -m 0644 "${BINARIES_DIR}/xiaozhi/assets/${asset}" "${distr_rootfs}/opt/xiaozhi/assets/${asset}"
+            done
+            install -D -m 0755 "${target_dir}/usr/lib/liblvgl.so" "${distr_rootfs}/opt/xiaozhi/lib/liblvgl.so"
+            install -D -m 0755 "${BINARIES_DIR}/xiaozhi/lib/libpaho-mqtt3as.so.1" "${distr_rootfs}/opt/xiaozhi/lib/libpaho-mqtt3as.so.1"
+            install -D -m 0755 "${target_dir}/usr/lib/liblvgl_thorvg.so.9.6.0" "${distr_rootfs}/opt/xiaozhi/lib/liblvgl_thorvg.so.9"
+            install -D -m 0755 "${distribution_dir}/xiaozhi/yahboom-xiaozhi" "${distr_rootfs}/usr/local/sbin/yahboom-xiaozhi"
+            install -D -m 0755 "${distribution_dir}/xiaozhi/yahboom-xiaozhi-mode.py" "${distr_rootfs}/usr/local/sbin/yahboom-xiaozhi-mode.py"
+            install -D -m 0755 "${distribution_dir}/xiaozhi/enroll-wake.py" "${distr_rootfs}/opt/xiaozhi/enroll-wake.py"
+            install -D -m 0644 "${distribution_dir}/xiaozhi/yahboom-xiaozhi.service" "${distr_rootfs}/etc/systemd/system/yahboom-xiaozhi.service"
+            install -D -m 0644 "${distribution_dir}/xiaozhi/xiaozhi.desktop" \
+                "${distr_rootfs}/usr/share/applications/xiaozhi.desktop"
+
             local elaina_password_hash
             elaina_password_hash=$(openssl passwd -6 '6')
             local desktop_root
@@ -409,18 +440,19 @@ LIGHTDM_EOF
                 chroot "${desktop_root}" /usr/bin/qemu-riscv64-static /usr/sbin/useradd \
                     --create-home --user-group \
                     --home-dir /home/elaina --shell /bin/bash \
-                    --groups sudo,video,input,render,netdev,plugdev,dialout \
+                    --groups sudo,audio,video,input,render,netdev,plugdev,dialout \
                     --password "${elaina_password_hash}" elaina
             else
                 chroot "${desktop_root}" /usr/bin/qemu-riscv64-static /usr/sbin/usermod \
                     --shell /bin/bash \
-                    --append --groups sudo,video,input,render,netdev,plugdev,dialout \
+                    --append --groups sudo,audio,video,input,render,netdev,plugdev,dialout \
                     --password "${elaina_password_hash}" elaina
             fi
             rm -f "${distr_rootfs}/usr/bin/qemu-riscv64-static"
             install -D -m 0440 /dev/null "${distr_rootfs}/etc/sudoers.d/elaina-desktop"
             printf 'elaina ALL=(root) NOPASSWD: /usr/bin/systemctl stop lightdm.service\nelaina ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block yahboom-camera-preview.service\n' \
                 > "${distr_rootfs}/etc/sudoers.d/elaina-desktop"
+            install -D -m 0440 "${distribution_dir}/xiaozhi/sudoers-xiaozhi" "${distr_rootfs}/etc/sudoers.d/xiaozhi"
             chown root:root "${distr_rootfs}/etc/sudoers.d/elaina-desktop"
 
             install -D -m 0755 "${distribution_dir}/yahboom-firefox.sh" \

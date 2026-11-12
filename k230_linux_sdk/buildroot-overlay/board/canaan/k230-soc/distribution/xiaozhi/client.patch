@@ -1,0 +1,830 @@
+diff --git a/src/common/cfg.h b/src/common/cfg.h
+index 893d9d4..8c338f3 100644
+--- a/src/common/cfg.h
++++ b/src/common/cfg.h
+@@ -9,6 +9,6 @@
+ #define WAKEUP_WORD_DETECTION_CONTROL_PORT_DOWN 5685 /*ai_app向sound_app的这个端口下发唤醒词控制信息*/
+ 
+ 
+-#define CFG_FILE "/etc/xiaozhi.cfg"
++#define CFG_FILE "/home/elaina/.config/xiaozhi.cfg"
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/xiaozhi_client/control_center.cc b/src/xiaozhi_client/control_center.cc
+index c27869e..f68d21c 100644
+--- a/src/xiaozhi_client/control_center.cc
++++ b/src/xiaozhi_client/control_center.cc
+@@ -31,7 +31,13 @@
+ #include <websocketpp/config/asio_client.hpp>
+ #include <websocketpp/client.hpp>
+ 
+-#include <iostream>
++#include <iostream>
++#include <atomic>
++#include <chrono>
++#include <thread>
++#include <arpa/inet.h>
++#include <sys/socket.h>
++#include <unistd.h>
+ #include <fstream>
+ #include <vector>
+ #include <algorithm>
+@@ -49,12 +55,18 @@
+ #include "uuid.h"
+ 
+ #include "cfg.h"
+-#include "control_center.h"
++#include "control_center.h"
++#include "mqtt_transport.h"
+ 
+ extern SpeechInteractionMode g_speech_interaction_mode;
+ using json = nlohmann::json;
+ int g_audio_upload_enable = 1;
+-static std::string g_session_id;
++static std::string g_session_id;
++static std::atomic<unsigned long> g_turn_generation{0};
++static std::atomic<bool> g_accept_server_audio{true};
++static std::atomic<bool> g_server_speaking{false};
++static std::atomic<bool> g_ignore_interrupted_stop{false};
++static std::atomic<bool> g_waiting_for_interruption_speech{false};
+ int g_websocket_start = 0;
+ 
+ WebttsConfig g_webtts_config;
+@@ -68,7 +80,20 @@ static std::string g_mac;
+ static websocket_data_t g_ws_data;
+ static server_audio_data_callback g_callback = NULL;
+ static audio_tts_state_callback g_tts_callback = NULL;
+-static ws_work_state_callback g_ws_state_callback = NULL;
++static ws_work_state_callback g_ws_state_callback = NULL;
++
++static void set_wake_playback(bool playing)
++{
++    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
++    if (fd < 0) return;
++    sockaddr_in address{};
++    address.sin_family = AF_INET;
++    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    address.sin_port = htons(5682);
++    sendto(fd, playing ? "PLAY" : "IDLE", 4, 0,
++           reinterpret_cast<sockaddr *>(&address), sizeof(address));
++    close(fd);
++}
+ 
+ static void create_default_xiaozhi_config(std::string &ota_url, std::string &ws_addr)
+ {
+@@ -108,7 +133,7 @@ static void send_stt(const std::string& text)
+ static void process_opus_data_downloaded(const char *buffer, size_t size)
+ {
+     //printf("========audio data downloaded===========:%d\n",size);
+-    if (g_callback != NULL) {
++    if (g_accept_server_audio && g_callback != NULL) {
+         g_callback((const unsigned char *)buffer, size);
+     }
+ }
+@@ -155,14 +180,42 @@ static void send_start_listening_req(ListeningMode mode)
+     }
+ }
+ 
+-static void process_hello_json(const char *buffer, size_t size)
++static void start_turn_timeout(int seconds)
++{
++    unsigned long generation = ++g_turn_generation;
++    std::thread([generation, seconds]() mutable {
++        std::this_thread::sleep_for(std::chrono::seconds(seconds));
++        if (!g_turn_generation.compare_exchange_strong(generation, generation + 1)) return;
++        g_waiting_for_interruption_speech = false;
++        g_audio_upload_enable = 0;
++        if (g_websocket_start) {
++            json message = {{"session_id", g_session_id}, {"type", "listen"}, {"state", "stop"}};
++            auto data = message.dump();
++            websocket_send_text(data.data(), data.size());
++            if (mqtt_enabled()) {
++                message = {{"session_id", g_session_id}, {"type", "goodbye"}};
++                data = message.dump();
++                websocket_send_text(data.data(), data.size());
++                mqtt_close_audio();
++            }
++        }
++        set_device_state(kDeviceStateIdle);
++        send_device_state();
++        std::cout << "Voice turn finished; waiting for wake word" << std::endl;
++    }).detach();
++}
++
++static void process_hello_json(const char *buffer, size_t size)
+ {
+     json j = json::parse(buffer);
+     int sample_rate = j["audio_params"]["sample_rate"];
+     int channels = j["audio_params"]["channels"];
+     std::cout << "Received valid 'hello' message with sample_rate: " << sample_rate << " and channels: " << channels << std::endl;
+ 
+-    g_session_id = j["session_id"];
++    g_session_id = j["session_id"];
++    g_waiting_for_interruption_speech = false;
++    set_device_state(kDeviceStateListening);
++    send_device_state();
+ #if 0
+     std::string desc = R"(
+     {"session_id":"","type":"iot","update":true,"descriptors":[{"name":"Speaker","description":"扬声器","properties":{"volume":{"description":"当前音量值","type":"number"}},"methods":{"SetVolume":{"description":"设置音量","parameters":{"volume":{"description":"0到100之间的整数","type":"number"}}}}}]}
+@@ -206,24 +259,15 @@ static void process_hello_json(const char *buffer, size_t size)
+     }
+ #endif
+ 
+-    std::string startString;
+-    if (g_speech_interaction_mode == kSpeechInteractionModeAuto) {
+-        startString = R"({"session_id":"","type":"listen","state":"start","mode":"auto"})";
+-    } else if (g_speech_interaction_mode == kSpeechInteractionModeManual) {
+-        startString = R"({"session_id":"","type":"listen","state":"start","mode":"manual"})";
+-    } else if (g_speech_interaction_mode == kSpeechInteractionModeRealtime) {
+-        startString = R"({"session_id":"","type":"listen","state":"start","mode":"realtime"})";
+-    } else if (g_speech_interaction_mode == kSpeechInteractionModeAutoWithWakeupWord) {
+-        startString = R"({"session_id":"","type":"listen","state":"start","mode":"auto"})";
+-    }
+-
+-    try {
+-        //c->send(hdl, startString, websocketpp::frame::opcode::text);
+-        websocket_send_text(startString.data(), startString.size());
+-        std::cout << "Send: " << startString << std::endl;
+-    } catch (const websocketpp::lib::error_code& e) {
+-        std::cout << "Error sending message: " << e << " (" << e.message() << ")" << std::endl;
+-    }
++    if (g_speech_interaction_mode == kSpeechInteractionModeAuto) {
++        send_start_listening_req(kListeningModeAutoStop);
++    } else if (g_speech_interaction_mode == kSpeechInteractionModeManual) {
++        send_start_listening_req(kListeningModeManualStop);
++    } else if (g_speech_interaction_mode == kSpeechInteractionModeRealtime) {
++        send_start_listening_req(kListeningModeAlwaysOn);
++    } else if (g_speech_interaction_mode == kSpeechInteractionModeAutoWithWakeupWord) {
++        send_start_listening_req(kListeningModeAutoStop);
++    }
+ 
+     g_audio_upload_enable = 1;
+ 
+@@ -252,17 +296,44 @@ static void process_other_json(const char *buffer, size_t size)
+         if (!j.contains("type"))
+             return;
+ 
+-        if (j["type"] == "tts") {
+-            auto state = j["state"];
+-            if (state == "start") {
++        if (j["type"] == "tts") {
++            auto state = j["state"];
++            std::cout << "Server TTS state: " << state.get<std::string>() << std::endl;
++            if (g_waiting_for_interruption_speech) {
++                if (state == "stop") g_ignore_interrupted_stop = false;
++                std::cout << "Ignoring interrupted response while listening" << std::endl;
++                return;
++            }
++            if (state == "start") {
++                g_ignore_interrupted_stop = false;
++                g_server_speaking = true;
++                set_wake_playback(true);
++                g_accept_server_audio = true;
+                 // 下发语音, 可以关闭录音
+-                g_audio_upload_enable = 0;
+-                set_device_state(kDeviceStateListening);
++                g_audio_upload_enable = 0;
++                if (mqtt_enabled()) ++g_turn_generation;
++                set_device_state(kDeviceStateSpeaking);
+                 send_device_state();
+                 if (g_tts_callback != NULL) {
+                     g_tts_callback(1);
+                 }
+-            } else if (state == "stop") {
++            } else if (state == "stop") {
++                g_server_speaking = false;
++                set_wake_playback(false);
++                if (g_ignore_interrupted_stop.exchange(false)) {
++                    std::cout << "Interrupted response stopped" << std::endl;
++                    return;
++                }
++                if (mqtt_enabled()) {
++                    if (g_tts_callback != NULL) g_tts_callback(0);
++                    send_start_listening_req(kListeningModeAutoStop);
++                    g_audio_upload_enable = 1;
++                    set_device_state(kDeviceStateListening);
++                    send_device_state();
++                    start_turn_timeout(20);
++                    std::cout << "Listening for follow-up" << std::endl;
++                    return;
++                }
+                 if (g_speech_interaction_mode == kSpeechInteractionModeAuto || g_speech_interaction_mode == kSpeechInteractionModeAutoWithWakeupWord) {
+                     // 本次交互结束, 可以继续上传声音
+                     // 等待一会以免她听到自己的话误以为再次对话
+@@ -293,7 +364,10 @@ static void process_other_json(const char *buffer, size_t size)
+                 set_device_state(kDeviceStateSpeaking);
+                 send_device_state();
+             }
+-        } else if (j["type"] == "stt") {
++        } else if (j["type"] == "stt") {
++            g_waiting_for_interruption_speech = false;
++            std::cout << "Server recognized speech" << std::endl;
++            if (mqtt_enabled()) start_turn_timeout(60);
+             // 表示服务器端识别到了用户语音, 取出"text", 通知GUI
+             auto text = j["text"];
+             send_stt(text.get<std::string>());
+@@ -323,7 +397,16 @@ static void process_other_json(const char *buffer, size_t size)
+             "confused"
+         */
+             auto emotion = j["emotion"];
+-        } else if (j["type"] == "iot") {
++        } else if (j["type"] == "goodbye") {
++            g_waiting_for_interruption_speech = false;
++            g_server_speaking = false;
++            g_ignore_interrupted_stop = false;
++            set_wake_playback(false);
++            ++g_turn_generation;
++            g_audio_upload_enable = 0;
++            set_device_state(kDeviceStateIdle);
++            send_device_state();
++        } else if (j["type"] == "iot") {
+ 
+         }
+     } catch (json::parse_error& e) {
+@@ -386,10 +469,42 @@ int  send_audio(const unsigned char *buffer, int size, void *user_data)
+     return 0;
+ }
+ 
+-int process_ui_data(char *buffer, size_t size, void *user_data)
+-{
+-    return 0;
+-}
++int process_ui_data(char *buffer, size_t size, void *user_data)
++{
++    try {
++        const auto message = json::parse(buffer, buffer + size);
++        if (message.value("type", "") != "wake") return 0;
++        extern std::atomic<bool> g_client_ready;
++        if (!g_client_ready.load()) {
++            send_device_state();
++            return 0;
++        }
++        std::cout << "Manual wake requested" << std::endl;
++        if (mqtt_enabled()) start_turn_timeout(20);
++        if (!g_websocket_start) {
++            set_device_state(kDeviceStateConnecting);
++            send_device_state();
++            connect_to_xiaozhi_server();
++        } else {
++            g_accept_server_audio = false;
++            g_waiting_for_interruption_speech = true;
++            if (g_server_speaking.exchange(false)) {
++                g_ignore_interrupted_stop = true;
++                set_wake_playback(false);
++            }
++            abort_cur_session();
++            std::cout << "Wake interruption requested; listening for new speech" << std::endl;
++            send_start_listening_req(kListeningModeAutoStop);
++            g_audio_upload_enable = 1;
++            set_device_state(kDeviceStateListening);
++            send_device_state();
++        }
++    } catch (const std::exception &error) {
++        std::cerr << "Invalid UI message: " << error.what() << std::endl;
++        return -1;
++    }
++    return 0;
++}
+ 
+ /**
+  * 从配置文件中读取 UUID
+@@ -644,7 +759,9 @@ bool read_xiaozhi_from_config(std::string& ota_url, std::string& ws_addr) {
+     return false;
+ }
+ 
+-int  active_device()
++static void parseWebSocketUrl(const std::string& url, websocket_data_t& data);
++
++int  active_device()
+ {
+     char active_code[20] = "";
+     static http_data_t http_data;
+@@ -675,14 +792,16 @@ int  active_device()
+     headers_stream << R"(
+         {
+             "Content-Type": "application/json",
+-            "Device-Id": ")" << g_mac << R"(",
++            "Device-Id": ")" << g_mac << R"(",
++            "Client-Id": ")" << g_uuid << R"(",
++            "Activation-Version": "1",
+             "User-Agent": "canaan",
+             "Accept-Language": "zh-CN"
+         }
+     )";
+     http_data.headers = headers_stream.str();
+ 
+-    while (0 != active_device(&http_data, active_code)) {
++    while (0 != active_device(&http_data, active_code)) {
+         std::cout << "active_device failed" << std::endl;
+         if (active_code[0]) {
+             std::string auth_code = "Active-Code: " + std::string(active_code);
+@@ -690,8 +809,21 @@ int  active_device()
+             send_device_state();
+             send_stt(auth_code);
+         }
+-        sleep(5);
+-    }
++        sleep(5);
++    }
++
++    if (!http_data.mqtt_config.empty()) {
++        mqtt_configure(http_data.mqtt_config, process_opus_data_downloaded, process_txt_data_downloaded);
++    } else {
++    parseWebSocketUrl(http_data.websocket_url, g_ws_data);
++    json ws_headers = {
++        {"Authorization", "Bearer " + http_data.websocket_token},
++        {"Protocol-Version", "1"},
++        {"Device-Id", g_mac},
++        {"Client-Id", g_uuid},
++    };
++    g_ws_data.headers = ws_headers.dump();
++    }
+ 
+     set_device_state(kDeviceStateIdle);
+     send_device_state();
+@@ -853,8 +985,9 @@ int  init_device(server_audio_data_callback callback,audio_tts_state_callback tt
+     return 0;
+ }
+ 
+-int  connect_to_xiaozhi_server()
+-{
++int  connect_to_xiaozhi_server()
++{
++    if (mqtt_enabled()) return mqtt_open_audio();
+     if (g_websocket_start == 0) {
+         websocket_start();
+         //g_websocket_start = 1;
+diff --git a/src/xiaozhi_client/http.cc b/src/xiaozhi_client/http.cc
+index 8681d54..3f7edfe 100644
+--- a/src/xiaozhi_client/http.cc
++++ b/src/xiaozhi_client/http.cc
+@@ -48,8 +48,9 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+  * @param code 存储激活码
+  * @return 0-已经激活, 1-得到了激活码(等待激活), -1-失败
+  */
+-int active_device(p_http_data_t pHttpData, char *codebuf) {
+-    int ret = -1;
++int active_device(p_http_data_t pHttpData, char *codebuf) {
++    int ret = -1;
++    codebuf[0] = '\0';
+ 
+     CURL* curl;
+     CURLcode res;
+@@ -66,18 +67,18 @@ int active_device(p_http_data_t pHttpData, char *codebuf) {
+         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+ 
+         // 设置POST数据
+-        std::cout << "PostFields: " << postFields << std::endl;
+-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
+-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
++        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
++        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
++        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
++        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
++        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+ 
+         // 设置请求头
+         struct curl_slist *curlheaders = NULL;
+         try {
+-            std::cout << "headers: " << headers << std::endl;
+             nlohmann::json headerJson = nlohmann::json::parse(headers);
+             for (const auto& [key, value] : headerJson.items()) {
+                 std::string headerLine = key + ": " + value.get<std::string>();
+-                std::cout << "parsed head: "<< headerLine << std::endl;
+                 curlheaders = curl_slist_append(curlheaders, headerLine.c_str());
+             }
+         } catch (const nlohmann::json::parse_error& e) {
+@@ -98,10 +99,13 @@ int active_device(p_http_data_t pHttpData, char *codebuf) {
+         std::cout << "curl_easy_perform res: " << res << std::endl;
+ 
+         // 检查请求是否成功
+-        if(res != CURLE_OK) {
+-            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+-        } else {
+-            std::cout << "Response: " << readBuffer << std::endl;
++        long http_status = 0;
++        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
++        if(res != CURLE_OK) {
++            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
++        } else if (http_status < 200 || http_status >= 300) {
++            std::cerr << "Activation HTTP status: " << http_status << std::endl;
++        } else {
+ 
+             // 解析响应数据
+             /*
+@@ -133,13 +137,26 @@ int active_device(p_http_data_t pHttpData, char *codebuf) {
+                 if (responseJson.contains("activation") && responseJson["activation"].contains("code")) {
+                     std::string code = responseJson["activation"]["code"];
+                     std::cout << "Activation Code: " << code << std::endl;
+-                    strncpy(codebuf, code.c_str(), code.size() + 1); // 存储激活码到codebuf
++                    snprintf(codebuf, 20, "%s", code.c_str());
+                     ret = 1; // 表示未激活
+-                } else {
+-                    std::cerr << "Device has been Activated" << std::endl;
+-                    ret = 0;
++                } else if (responseJson.contains("mqtt") && responseJson["mqtt"].is_object() &&
++                           !responseJson["mqtt"].value("endpoint", "").empty() &&
++                           !responseJson["mqtt"].value("client_id", "").empty() &&
++                           !responseJson["mqtt"].value("publish_topic", "").empty()) {
++                    pHttpData->mqtt_config = responseJson["mqtt"].dump();
++                    ret = 0;
++                } else if (responseJson.contains("websocket") &&
++                           responseJson["websocket"].is_object() &&
++                           responseJson["websocket"].value("url", "").rfind("wss://", 0) == 0 &&
++                           !responseJson["websocket"].value("token", "").empty()) {
++                    pHttpData->websocket_url = responseJson["websocket"]["url"];
++                    pHttpData->websocket_token = responseJson["websocket"]["token"];
++                    std::cerr << "Device has been Activated" << std::endl;
++                    ret = 0;
++                } else {
++                    std::cerr << "Invalid activation response" << std::endl;
+                 }
+-            } catch (const nlohmann::json::parse_error& e) {
++            } catch (const nlohmann::json::exception& e) {
+                 std::cerr << "Failed to parse response JSON: " << e.what() << std::endl;
+                 ret = -1;
+             }
+@@ -154,4 +171,4 @@ int active_device(p_http_data_t pHttpData, char *codebuf) {
+     curl_global_cleanup();
+ 
+     return ret;
+-}
+\ No newline at end of file
++}
+diff --git a/src/xiaozhi_client/http.h b/src/xiaozhi_client/http.h
+index c93a1c2..b5e68f9 100644
+--- a/src/xiaozhi_client/http.h
++++ b/src/xiaozhi_client/http.h
+@@ -6,7 +6,10 @@
+ typedef struct http_data_t {
+     std::string url;
+     std::string post;
+-    std::string headers;
++    std::string headers;
++    std::string websocket_url;
++    std::string websocket_token;
++    std::string mqtt_config;
+ } http_data_t, *p_http_data_t;
+ 
+ /**
+@@ -18,4 +21,4 @@ typedef struct http_data_t {
+  */
+ int active_device(p_http_data_t pHttpData, char *codebuf);
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/xiaozhi_client/main.cc b/src/xiaozhi_client/main.cc
+index 16fc62a..86716bc 100644
+--- a/src/xiaozhi_client/main.cc
++++ b/src/xiaozhi_client/main.cc
+@@ -25,12 +25,14 @@
+ #include <iostream>
+ #include <pthread.h>
+ #include <stdbool.h>
++#include <atomic>
+ #include <stdlib.h>
+ #include "json.hpp"
+ 
+ #include "acap.h"
+ #include "cfg.h"
+ #include "ipc_udp.h"
++#include "mqtt_transport.h"
+ #include "wake_word_generator.h"
+ #include "webttsctrl.h"
+ 
+@@ -42,6 +44,8 @@ extern int g_websocket_start;
+ static WakeupMethodMode g_wakeup_method = kWakeupMethodModeUnknown; // 默认值
+ extern int g_audio_upload_enable;
+ SpeechInteractionMode g_speech_interaction_mode = kSpeechInteractionModeAuto;
++std::atomic<bool> g_client_ready{false};
++static bool g_wait_for_manual_start = false;
+ int g_wakeup_word_start = 0;
+ 
+ p_ipc_endpoint_t g_ipc_wakeup_detect_audio_ep;
+@@ -100,6 +104,9 @@ static int parse_command_args(int argc, char **argv)
+         std::string mode_arg = argv[1];
+         if (mode_arg == "auto") {
+             g_speech_interaction_mode = kSpeechInteractionModeAuto;
++        } else if (mode_arg == "button") {
++            g_speech_interaction_mode = kSpeechInteractionModeAuto;
++            g_wait_for_manual_start = true;
+         } else if (mode_arg == "manual") {
+             g_speech_interaction_mode = kSpeechInteractionModeManual;
+         } else if (mode_arg == "realtime") {
+@@ -319,9 +326,11 @@ int main(int argc, char **argv)
+ 
+     //启动音频
+     acap_start();
++    g_client_ready.store(true);
++    if (mqtt_enabled()) mqtt_start();
+ 
+     //连接到小智服务器
+-    if (g_speech_interaction_mode != kSpeechInteractionModeAutoWithWakeupWord) {
++    if (g_speech_interaction_mode != kSpeechInteractionModeAutoWithWakeupWord && !g_wait_for_manual_start) {
+         connect_to_xiaozhi_server();
+     }
+     else
+@@ -341,4 +350,4 @@ int main(int argc, char **argv)
+     acap_deinit();
+ 
+     return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/src/xiaozhi_client/snd_core/acap.cc b/src/xiaozhi_client/snd_core/acap.cc
+index 0d415ef..4241fc8 100644
+--- a/src/xiaozhi_client/snd_core/acap.cc
++++ b/src/xiaozhi_client/snd_core/acap.cc
+@@ -132,6 +132,10 @@ static void init_audio_decoder(void) {
+ int play_opus_stream(const unsigned char* data, int size)
+ {
+     int decoded_size = opus_decode(opus_decoder, data, size, output_buffer, BUFFER_SAMPLES, 0);
++    if (decoded_size < 0) {
++        fprintf(stderr, "Opus decode failed: %s\n", opus_strerror(decoded_size));
++        return -1;
++    }
+     {
+ 
+         if (pcm_speaker_file != NULL)
+@@ -140,7 +144,7 @@ int play_opus_stream(const unsigned char* data, int size)
+     }
+ 
+     // 播放 PCM 数据
+-    play_pcm((char*)output_buffer);
++    play_pcm_samples((char*)output_buffer, decoded_size);
+ 
+ #if ENABLE_AUDIO_ENHANCEMENT
+     webrtc_process_reference_audio((char*)output_buffer,decoded_size*2);
+@@ -159,6 +163,7 @@ static void* capture_thread_func(void* arg) {
+             continue;
+         }
+ 
++
+         if (g_wakeup_word_start)
+         {
+             continue;
+@@ -295,5 +300,9 @@ static void acap_play_pcm_file(const char* file_path) {
+ 
+ void set_tts_state(int tts_state)
+ {
++#if ENABLE_AUDIO_ENHANCEMENT
+     webrtc_enable_ref_audio(tts_state);
++#else
++    (void)tts_state;
++#endif
+ }
+diff --git a/src/xiaozhi_client/snd_core/capture_pcm.cc b/src/xiaozhi_client/snd_core/capture_pcm.cc
+index 32b00ec..a9fe981 100644
+--- a/src/xiaozhi_client/snd_core/capture_pcm.cc
++++ b/src/xiaozhi_client/snd_core/capture_pcm.cc
+@@ -17,15 +17,17 @@
+  */
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <vector>
+ #include "alsa/asoundlib.h"
+ #include "alsa/pcm.h"
+ #include "capture_pcm.h"
+ 
+-#define PCM_DEVICE "default"
++#define PCM_DEVICE "hw:0,0"
+ 
+ static snd_pcm_t *pcm_handle;
+ static snd_pcm_hw_params_t *params;
+ static snd_pcm_uframes_t frames;
++static std::vector<short> stereo_buffer;
+ 
+ int init_capture_pcm(int sample_rate, int num_channels,int frame_samples,int bits_per_sample) {
+     int rc;
+@@ -49,7 +51,7 @@ int init_capture_pcm(int sample_rate, int num_channels,int frame_samples,int bit
+     // Set the desired hardware parameters
+     snd_pcm_hw_params_set_access(pcm_handle, params, SND_PCM_ACCESS_RW_INTERLEAVED);
+     snd_pcm_hw_params_set_format(pcm_handle, params, SND_PCM_FORMAT_S16_LE);
+-    snd_pcm_hw_params_set_channels(pcm_handle, params, num_channels);
++    snd_pcm_hw_params_set_channels(pcm_handle, params, 2);
+     snd_pcm_hw_params_set_rate_near(pcm_handle, params, (unsigned int*)&sample_rate, &dir);
+     snd_pcm_hw_params_set_period_size(pcm_handle, params, frames, dir);
+     snd_pcm_uframes_t frame_size = frame_samples*2*3;
+@@ -65,6 +67,7 @@ int init_capture_pcm(int sample_rate, int num_channels,int frame_samples,int bit
+     }
+     // Use a buffer large enough to hold one period
+     snd_pcm_hw_params_get_period_size(params, &frames, &dir);
++    stereo_buffer.resize(frames * 2);
+     printf("capture %d,rc = %d,frames:%ld dir:%d.\n",__LINE__,rc,frames,dir);
+ 
+     // 获取实际设置的缓冲队列大小
+@@ -88,7 +91,7 @@ int capture_pcm(char* pcm_out_buffer) {
+     int rc=0;
+     while(1)
+     {
+-        rc = snd_pcm_readi(pcm_handle, pcm_out_buffer, frames);
++        rc = snd_pcm_readi(pcm_handle, stereo_buffer.data(), frames);
+         if (rc == -EPIPE) {
+             fprintf(stderr, "overrun occurred\n");
+             snd_pcm_prepare(pcm_handle);
+@@ -106,6 +109,9 @@ int capture_pcm(char* pcm_out_buffer) {
+ 
+     }
+ 
++    short *mono = reinterpret_cast<short *>(pcm_out_buffer);
++    for (snd_pcm_uframes_t i = 0; i < frames; ++i)
++        mono[i] = stereo_buffer[i * 2 + 1];
+     return 0;
+ }
+ 
+@@ -116,4 +122,3 @@ int deinit_capture_pcm(){
+     return 0;
+ }
+ 
+-
+diff --git a/src/xiaozhi_client/snd_core/play_pcm.cc b/src/xiaozhi_client/snd_core/play_pcm.cc
+index 07efdff..34b454a 100644
+--- a/src/xiaozhi_client/snd_core/play_pcm.cc
++++ b/src/xiaozhi_client/snd_core/play_pcm.cc
+@@ -80,27 +80,31 @@ int init_play_pcm(int sample_rate,int channels,int frame_samples,int bits_per_sa
+ 
+ int play_pcm(char *pcm_buffer)
+ {
+-	int ret = 0;
+-    while(1){
+-        ret = snd_pcm_writei(handle, pcm_buffer, frames);
++    return play_pcm_samples(pcm_buffer, frames);
++}
++
++int play_pcm_samples(const char *pcm_buffer, int samples)
++{
++    int total = 0;
++    while (total < samples) {
++        int ret = snd_pcm_writei(handle, pcm_buffer + total * sizeof(short), samples - total);
+         if (ret == -EPIPE) {
+-            /* -EPIPE means underrun */
+-            // fprintf(stderr, "underrun occured\n");
+             snd_pcm_prepare(handle);
+-        } else if (ret < 0) {
++        } else if (ret < 0 && ret != -EAGAIN) {
+             fprintf(stderr, "error from writei: %s\n", snd_strerror(ret));
++            return ret;
+         }
+-        if(ret==0||ret==-EAGAIN||ret==-EPIPE){
++        if (ret == 0 || ret == -EAGAIN || ret == -EPIPE) {
+             usleep(1000);
+             continue;
+         }
+-        break;
++        total += ret;
+     }
+-    return ret;
++    return total;
+ }
+ 
+ int deinit_play_pcm(){
+ 	snd_pcm_drain(handle);
+     snd_pcm_close(handle);
+ 	return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/src/xiaozhi_client/snd_core/play_pcm.h b/src/xiaozhi_client/snd_core/play_pcm.h
+index a5921b7..d427e89 100644
+--- a/src/xiaozhi_client/snd_core/play_pcm.h
++++ b/src/xiaozhi_client/snd_core/play_pcm.h
+@@ -7,7 +7,8 @@
+ int init_play_pcm(int sample_rate,int channels,int frame_samples,int bits_per_sample);
+ 
+ int play_pcm(char *pcm_buf);
++int play_pcm_samples(const char *pcm_buf, int samples);
+ 
+ int deinit_play_pcm();
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/xiaozhi_client/snd_core/webttsctrl.cc b/src/xiaozhi_client/snd_core/webttsctrl.cc
+index 937e826..8187956 100644
+--- a/src/xiaozhi_client/snd_core/webttsctrl.cc
++++ b/src/xiaozhi_client/snd_core/webttsctrl.cc
+@@ -65,9 +65,9 @@ static client* g_ws_client;
+ // 默认配置初始化函数
+ WebttsConfig create_default_webtts_config() {
+     WebttsConfig config;
+-    config.app_id = "7cdb8495";
+-    config.api_key = "b788270f8921a236293aa5f5385aa7b9";
+-    config.api_secret = "NTAyY2E4MTNlOWNlYmI0MzllZGQ4ZTE1";
++    config.app_id = "";
++    config.api_key = "";
++    config.api_secret = "";
+     config.sample_rate = 16000;
+     config.voice_name = "xiaoyan";
+     config.speed = 80;
+@@ -237,7 +237,9 @@ static string get_auth_str() {
+ static context_ptr on_tls_init() {
+     context_ptr ctx = websocketpp::lib::make_shared<websocketpp::lib::asio::ssl::context>(asio::ssl::context::tlsv12_client);
+     ctx->set_options(SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
+-    ctx->set_verify_mode(asio::ssl::verify_none);
++    ctx->set_default_verify_paths();
++    ctx->set_verify_mode(asio::ssl::verify_peer);
++    ctx->set_verify_callback(asio::ssl::rfc2818_verification(HOST));
+     return ctx;
+ }
+ 
+@@ -439,4 +441,4 @@ int webtts_send_text(const char* text)
+     }
+ 
+     return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/src/xiaozhi_client/websocket_client.cc b/src/xiaozhi_client/websocket_client.cc
+index 742c07a..fe9ea5a 100644
+--- a/src/xiaozhi_client/websocket_client.cc
++++ b/src/xiaozhi_client/websocket_client.cc
+@@ -42,7 +42,8 @@ using namespace std;
+ // Include nlohmann/json library
+ #include "json.hpp"
+ #include "websocket_client.h"
+-#include "control_center.h"
++#include "control_center.h"
++#include "mqtt_transport.h"
+ 
+ static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+ static int g_enable_debug = 0;
+@@ -226,7 +227,7 @@ static bool verify_certificate(const char * hostname, bool preverified, boost::a
+  * @param hdl 连接句柄
+  * @return TLS上下文指针
+  */
+-static context_ptr on_tls_init(const char * hostname, websocketpp::connection_hdl) {
++static context_ptr on_tls_init(std::string hostname, websocketpp::connection_hdl) {
+     context_ptr ctx = websocketpp::lib::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::sslv23);
+ 
+     try {
+@@ -236,13 +237,15 @@ static context_ptr on_tls_init(const char * hostname, websocketpp::connection_hd
+                          boost::asio::ssl::context::single_dh_use);
+ 
+         // 注释掉下面这行，否则会出现TLS握手失败错误
+-        //ctx->set_verify_mode(boost::asio::ssl::verify_peer);
+-        ctx->set_verify_callback(bind(&verify_certificate, hostname, ::_1, ::_2));
++        ctx->set_default_verify_paths();
++        ctx->set_verify_mode(boost::asio::ssl::verify_peer);
++        ctx->set_verify_callback(boost::asio::ssl::rfc2818_verification(hostname));
+ 
+         // 注释掉下面这行，否则会打印:load_verify_file: No such file or directory
+         //ctx->load_verify_file("ca-chain.cert.pem");
+-    } catch (std::exception& e) {
+-        std::cout << e.what() << std::endl;
++    } catch (std::exception& e) {
++        std::cout << e.what() << std::endl;
++        throw;
+     }
+     return ctx;
+ }
+@@ -345,7 +348,7 @@ static int websocket_connect(client *c) {
+ 
+         // 注册消息处理程序
+         c->set_message_handler(bind(&on_message, c, ::_1, ::_2));
+-        c->set_tls_init_handler(bind(&on_tls_init, hostname.c_str(), ::_1));
++        c->set_tls_init_handler(bind(&on_tls_init, hostname, ::_1));
+ 
+         // 注册连接打开处理程序
+         c->set_open_handler(bind(&on_open, c, ::_1));
+@@ -524,9 +527,12 @@ static void *websocket_send_thread(void *arg)
+  * @param size 数据大小
+  * @return 错误码
+  */
+-int websocket_send_binary(const char *data, int size) {
+-
+-    client_data_t client_data;
++int websocket_send_binary(const char *data, int size) {
++    if (mqtt_enabled()) return mqtt_send_audio(data, size);
++
++    client_data_t client_data;
++    if (!data || size < 0 || static_cast<size_t>(size) > sizeof(client_data.data_buffer))
++        return -1;
+     client_data.data_size = size;
+     client_data.data_type = 1; // 二进制数据
+     memcpy(client_data.data_buffer, data, size);
+@@ -545,9 +551,12 @@ int websocket_send_binary(const char *data, int size) {
+  * @param size 数据大小
+  * @return 错误码
+  */
+-int websocket_send_text(const char *data, int size) {
+-
+-    client_data_t client_data;
++int websocket_send_text(const char *data, int size) {
++    if (mqtt_enabled()) return mqtt_send_text(data, size);
++
++    client_data_t client_data;
++    if (!data || size < 0 || static_cast<size_t>(size) > sizeof(client_data.data_buffer))
++        return -1;
+     client_data.data_size = size;
+     client_data.data_type = 0; // 文本数据
+     memcpy(client_data.data_buffer, data, size);
+@@ -599,4 +608,4 @@ int websocket_start() {
+     ws_thread.detach();
+ 
+     return 0;
+-}
+\ No newline at end of file
++}

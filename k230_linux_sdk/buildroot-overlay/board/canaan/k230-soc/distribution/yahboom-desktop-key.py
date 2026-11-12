@@ -13,6 +13,7 @@ KEY_PROG1 = 148
 INPUT_EVENT = struct.Struct("@llHHi")
 RETURN_MARKER = "/home/elaina/.local/state/yahboom-camera-return"
 CAMERA_SERVICE = "yahboom-camera-preview.service"
+XIAOZHI_SERVICE = "yahboom-xiaozhi.service"
 stopping = False
 last_key_action = 0.0
 
@@ -77,7 +78,7 @@ def monitor_desktop_wake():
 
     try:
         while (not stopping and not unit_active("lightdm.service") and
-               not unit_active(CAMERA_SERVICE)):
+               not unit_active(CAMERA_SERVICE) and not unit_active(XIAOZHI_SERVICE)):
             now = time.monotonic()
             if now >= next_power_check:
                 if not display_is_powered_down():
@@ -136,7 +137,7 @@ def main():
     signal.signal(signal.SIGTERM, handle_stop)
     signal.signal(signal.SIGINT, handle_stop)
     while not stopping:
-        if unit_active("lightdm.service") or unit_active(CAMERA_SERVICE):
+        if unit_active("lightdm.service") or unit_active(CAMERA_SERVICE) or unit_active(XIAOZHI_SERVICE):
             time.sleep(0.5)
             continue
         monitor_desktop_wake()

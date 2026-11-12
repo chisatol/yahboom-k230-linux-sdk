@@ -1,0 +1,13 @@
+[Unit]
+Description=Yahboom Xiaozhi LVGL assistant
+Conflicts=yahboom-camera-preview.service
+
+[Service]
+Type=simple
+Environment=LD_LIBRARY_PATH=/opt/xiaozhi/lib
+ExecStart=/usr/local/sbin/yahboom-xiaozhi-mode.py
+Restart=no
+KillMode=control-group
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal

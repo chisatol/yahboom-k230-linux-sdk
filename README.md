@@ -12,15 +12,16 @@
 | 触摸 | FT5x06，I2C 触摸设备；包含触点计数兼容修正。X11 使用旋转后的绝对坐标映射。短按左键；按住至少约 0.65 秒且移动小于 20 像素为右键；按住超过约 0.50 秒并移动至少 20 像素开始拖动；双指纵向滑动模拟滚轮。 | ✓ 桌面触摸和相机画面操作正常 |
 | KEY1 | 原理图 GPIO61，对应 GPIO1 port 29，低电平有效；内核用轮询式 gpio-keys 注册 KEY_PROG1。桌面启动时默认 DPMS 关屏，KEY1 在关屏与桌面显示间切换。 | 已配置，待实机确认开关动作 |
 | GC2093 相机 | VVCAM/ISP 使用 GC2093 mode 0。实机识别传感器，VVCAM 注册 `/dev/video2` 至 `/dev/video4`；`/dev/video2` 支持 NV12，1920x1080@30，V4L2 采集测试正常。桌面应用菜单有 “Camera Check” 实时预览入口。 | ✓ 相机采集和画面显示正常 |
+| 音频 | 启用 K230 内置 codec 和 I2S 声卡；桌面用户加入 `audio` 组。测试设备树已在现有开发板上启动，ALSA 识别到 `K230_I2S_INNO` 的采集和播放设备。硬件 PCM 为双声道，ALSA 默认设备可转换为单声道。 | 已实测麦克风采集及扬声器出声；播放时的唤醒识别效果仍需验证 |
 | Wi-Fi | RTL8189FS 模块随系统加载；NetworkManager 管理 Wi-Fi。启动时优先尝试 `/root/wifi-config.sh` 中配置的上游网络，失败后以 hostapd/dnsmasq 启动备用热点。上游连接成功后，脚本读取无线接口的 IPv4 地址，并更新配置文件末尾的自动生成注释块；`wlan1` 设为不受 NetworkManager 管理，避免与板载 Wi-Fi 接口冲突。 | ✓ 联网和 IP 注释更新经 SSH 实测 |
 | USB 文件访问 | USB gadget 组合 MTP + ADB，MTP 可用于电脑与开发板间传文件、编辑根目录 Wi-Fi 配置；uMTPrd 设置为断连后继续运行，以便 USB 主机重新连接时再次枚举。该模式不是 USB 大容量存储盘。 | ✓ 服务 active、UDC 绑定经 SSH 检查；物理拔插重连未单独验收 |
-| Debian 桌面 | Debian 13 + LXDE，LightDM 自动以普通用户 `elaina` 登录；桌面、终端和 Firefox ESR 均以 `elaina` 运行。该用户属于 sudo、video、input、render、netdev、plugdev 和 dialout 组；sudo 可管理系统，桌面关屏与启动相机使用受限的免密码 systemctl 规则。root 账户保留用于维护。 | 已配置，待新镜像实机验证 |
+| Debian 桌面 | Debian 13 + LXDE，LightDM 自动以普通用户 `elaina` 登录；桌面、终端和 Firefox ESR 均以 `elaina` 运行。该用户属于 sudo、audio、video、input、render、netdev、plugdev 和 dialout 组；sudo 可管理系统，桌面关屏与启动相机使用受限的免密码 systemctl 规则。root 账户保留用于维护。 | 已配置，待新镜像实机验证 |
 | 调试串口与 SSH | U-Boot/Linux console 配置到 115200 串口；默认 root 密码为 `root`，SSH 密码认证开启。此密码是公开默认值，部署前应修改。 | ✓ 串口和 SSH 访问正常 |
 | Openbox 配置 | 镜像构建时检查 root 用户 LXDE Openbox XML；缺失、空白或 XML 错误时，从系统默认配置生成有效文件。 | ✓ XML 检查通过，构建期修复已配置 |
 
 ### 尚未据此认定为已适配
 
-SDK 配置中还包含音频、蓝牙、以太网、AI/非 AI 2D、UVC、RTSP/WebRTC 等驱动或软件包选项；“编译进 SDK”不等于已按这块板的原理图完成引脚、电源、设备树和实机功能验证。扬声器/麦克风、蓝牙、额外 GPIO/外接模块及其他摄像头接口仍应按实际接线逐项测试。
+SDK 配置中还包含蓝牙、以太网、AI/非 AI 2D、UVC、RTSP/WebRTC 等驱动或软件包选项；“编译进 SDK”不等于已按这块板的原理图完成引脚、电源、设备树和实机功能验证。音频在不同环境下的效果、蓝牙、额外 GPIO/外接模块及其他摄像头接口仍应按实际接线逐项测试。
 
 LCD 以外的外接显示、所有原理图引出的 UART/I2C/SPI、蜂鸣器和其他 GPIO，尚未逐一完成电气与功能验收。
 
@@ -32,7 +33,7 @@ LCD 以外的外接显示、所有原理图引出的 UART/I2C/SPI、蜂鸣器和
 - Linux 设备树：`k230_linux_sdk/buildroot-overlay/linux/k230-canmv-yahboom-lcd.dts`
 - LCD 初始化与时序：`k230_linux_sdk/buildroot-overlay/linux/display-d240c2501v1.dtsi`
 - Linux 配置片段：`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/fragment/`
-- Yahboom DTS、触摸和显示相关补丁：`k230_linux_sdk/buildroot-overlay/linux/0030-add-yahboom-dts.patch` 至 `0034-ft5x06-generic-touch-count.patch`
+- Yahboom DTS、触摸、显示和音频相关补丁：`k230_linux_sdk/buildroot-overlay/linux/0030-add-yahboom-dts.patch` 至 `0036-fix-inno-right-mic-gain.patch`
 - Debian 镜像集成逻辑：`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/distribution.sh`
 - 桌面、触摸和相机入口：`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/yahboom-*.py`、`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/yahboom-camera-preview`、`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/yahboom-configure-desktop.sh`
 - Wi-Fi 和 USB MTP/ADB：`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/yahboom-wifi-start.sh`、`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/yahboom-wifi.service`、`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/distribution/yahboom-usb-mtp.service`、`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/rootfs_overlay/etc/init.d/S41adb_mtp`、`k230_linux_sdk/buildroot-overlay/board/canaan/k230-soc/rootfs_overlay/etc/umtprd/umtprd.conf`
@@ -62,6 +63,17 @@ output/k230_canmv_yahboom_defconfig/images/sysimage-sdcard.img.gz
 ```
 
 ### 2. 组装 Debian + LXDE 镜像
+
+先在 `k230_linux_sdk` 目录下编译小智客户端和 LVGL 界面：
+
+```bash
+bash buildroot-overlay/board/canaan/k230-soc/distribution/xiaozhi/build.sh
+```
+
+该脚本使用 SDK 的 LVGL 工具链、宿主机 FFmpeg 及已缓存的小智源码、WebSocket++ 和 Boost；缺少这些依赖时需要先准备它们。
+从桌面打开“凑企鹅”会退出 LXDE 并运行全屏 LVGL 界面，触摸“手动唤醒”开始对话，按相机使用的 KEY1 返回桌面。设备上注册的本地唤醒词为“凑企鹅凑企鹅”，也可在回复期间用于打断；实际识别效果受环境和播放音量影响。唤醒词注册数据保存在设备的 `/home/elaina/.config/xiaozhi-wake.json`，不会自动随 SDK 进入新镜像，重装后需重新录入或单独迁移。首次连接需要在小智平台绑定界面显示的激活码。
+
+在首页点“人脸识别”进入人脸页，点“注册人脸”，由一名知情同意的人正对摄像头，注册名称按“用户1、用户2”等自动分配；点“身份比对”可与本机已注册的人脸比对。在“管理人脸”中可逐条更名或删除，更名支持英文、数字、连字符及下划线，删除需要二次确认。只有操作期间启用摄像头，特征数据存放在权限受限的 `/var/lib/xiaozhi/faces`。此功能尚需实机验证识别效果，也没有活体检测，不应用于安全认证。
 
 `make debian` 会把上述基础镜像与 Debian 13 根文件系统、LXDE、驱动、设备树相关文件和 Yahboom 定制脚本组装为最终镜像。该阶段需要管理员权限：
 
